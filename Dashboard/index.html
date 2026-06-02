@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Codeply Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --white: #ffffff;
+      --surface: #f8f8fc;
+      --surface2: #f0f0f8;
+      --row-alt: #fafafd;
+      --accent: #176bff;
+      --accent-light: #3d83ff;
+      --accent-dark: #0f57da;
+      --accent-tint: #e8efff;
+      --green: #00c46e;
+      --green-deep: #00a85e;
+      --green-tint: #dcf7ea;
+      --red: #ff3c50;
+      --red-tint: #ffe2e6;
+      --yellow: #f5a623;
+      --text: #0a0a14;
+      --navy: #11183a;
+      --text2: #6b6b8a;
+      --muted: #9a9ab4;
+      --line: rgba(10,10,20,0.06);
+      --line2: rgba(10,10,20,0.09);
+      --shadow: rgba(100,100,140,0.12);
+      --shadow-soft: rgba(100,100,140,0.07);
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'DM Sans', system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body {
+      background: #eef0f7; font-family: var(--sans); color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Titlebar ── */
+    .titlebar {
+      height: 44px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; -webkit-app-region: drag;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      background: linear-gradient(180deg, #ffffff, #fbfbfe);
+      flex-shrink: 0; user-select: none;
+    }
+    .tb-brand { display: flex; align-items: center; gap: 10px; }
+    .tb-brand img { width: 19px; height: 19px; border-radius: 5px;
+      box-shadow: 0 1px 2px var(--shadow); }
+    .tb-brand span { font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; color: var(--text2); }
+    .tb-controls { display: flex; gap: 7px; -webkit-app-region: no-drag; }
+    .tb-btn {
+      width: 30px; height: 26px; border-radius: 8px; border: none;
+      background: linear-gradient(180deg, #ffffff, #f4f4fa); color: var(--text2);
+      cursor: pointer; font-size: 0.72rem;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .1s ease, box-shadow .12s ease, color .12s ease;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 2px 4px var(--shadow);
+    }
+    .tb-btn:hover { color: var(--accent); transform: translateY(-1px); }
+    .tb-btn:active { transform: translateY(1px); box-shadow: inset 0 1px 2px var(--shadow); }
+    .tb-btn.close:hover { color: var(--red); }
+
+    /* ── Layout ── */
+    .app { display: flex; height: calc(100vh - 44px); }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 212px; flex-shrink: 0;
+      background: var(--white);
+      box-shadow: 1px 0 0 var(--line), 6px 0 22px rgba(100,100,140,0.07);
+      display: flex; flex-direction: column; padding: 18px 0; z-index: 5;
+    }
+    .sidebar-logo {
+      display: flex; align-items: center; gap: 11px;
+      padding: 0 18px 18px; margin-bottom: 6px; border-bottom: 1px solid var(--line);
+    }
+    .sidebar-logo img {
+      width: 34px; height: 34px; border-radius: 10px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 6px var(--shadow);
+    }
+    .sidebar-logo-text { font-size: 1.12rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
+    .sidebar-logo-tag {
+      font-family: var(--mono); font-size: 0.5rem; font-weight: 600; color: var(--accent);
+      background: var(--accent-tint); padding: 1px 5px; border-radius: 4px; margin-left: 5px;
+      vertical-align: middle;
+    }
+
+    .nav { padding: 12px 12px; flex: 1; }
+    .nav-section {
+      font-family: var(--mono); font-size: 0.56rem; color: var(--muted);
+      padding: 0 10px; margin: 14px 0 7px; text-transform: uppercase; letter-spacing: 0.12em;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 11px;
+      cursor: pointer; color: var(--text2); font-size: 0.82rem; font-weight: 600;
+      transition: all 0.16s ease; margin-bottom: 3px;
+      border-left: 2px solid transparent; position: relative;
+    }
+    .nav-item:hover {
+      background: var(--surface2); color: var(--text);
+      box-shadow: inset 0 1px 2px rgba(100,100,140,0.10);
+      border-left-color: rgba(23,107,255,0.35);
+    }
+    .nav-item.active {
+      background: var(--white); color: var(--accent);
+      border-left-color: var(--accent);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 3px 8px var(--shadow);
+    }
+    .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .nav-badge {
+      margin-left: auto; font-family: var(--mono); font-size: 0.6rem; font-weight: 600;
+      background: var(--accent-tint); color: var(--accent);
+      padding: 1px 7px; border-radius: 10px;
+    }
+
+    .sidebar-user {
+      margin: 0 12px; padding: 11px; border-radius: 12px;
+      display: flex; align-items: center; gap: 11px; cursor: pointer;
+      background: var(--surface); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px var(--shadow-soft);
+      transition: transform .16s ease, box-shadow .16s ease;
+    }
+    .sidebar-user:hover { transform: translateY(-1px); box-shadow: 0 4px 12px var(--shadow); }
+    .user-avatar {
+      width: 34px; height: 34px; border-radius: 10px;
+      background: linear-gradient(160deg, var(--accent-light), var(--accent) 60%, #1463f0);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.88rem; font-weight: 800; color: white; flex-shrink: 0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 6px rgba(23,107,255,0.35);
+    }
+    .user-name { font-size: 0.8rem; font-weight: 700; color: var(--text); }
+    .user-plan { font-family: var(--mono); font-size: 0.6rem; color: var(--muted); margin-top: 1px; }
+
+    /* ── Main ── */
+    .main { flex: 1; overflow-y: auto; background: #eef0f7; }
+    .page { display: none; padding: 30px 34px; min-height: 100%; }
+    .page.active { display: block; }
+
+    .page-header { margin-bottom: 26px; }
+    .page-title { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.03em; color: var(--text); }
+    .page-subtitle { font-size: 0.84rem; color: var(--text2); margin-top: 5px; }
+
+    /* ── Login ── */
+    #loginPage { background: #eef0f7; }
+    .login-wrap { display: flex; align-items: center; justify-content: center; height: 100%; }
+    .login-card {
+      width: 392px; background: var(--white);
+      border-radius: 24px; padding: 38px; text-align: center;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 1px 2px var(--shadow-soft),
+        0 12px 28px var(--shadow),
+        0 36px 64px rgba(100,100,140,0.14);
+    }
+    .login-logo {
+      width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 22px;
+      background: linear-gradient(160deg, #ffffff, #f2f4fb);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 6px var(--shadow-soft), 0 8px 18px var(--shadow);
+    }
+    .login-logo img { width: 38px; height: 38px; }
+    .login-title { font-size: 1.45rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.02em; }
+    .login-sub { font-size: 0.84rem; color: var(--text2); margin-bottom: 28px; }
+    .login-field { text-align: left; margin-bottom: 14px; }
+    .login-label { font-size: 0.72rem; color: var(--text2); margin-bottom: 6px; display: block; font-weight: 600; }
+    .login-input {
+      width: 100%; padding: 12px 14px; border-radius: 11px; border: none;
+      background: var(--surface2); color: var(--text);
+      font-family: var(--mono); font-size: 0.78rem; outline: none;
+      box-shadow: inset 0 1px 2px rgba(100,100,140,0.14), 0 0 0 1px rgba(100,100,140,0.05);
+      transition: box-shadow 0.16s ease;
+    }
+    .login-input:focus { box-shadow: inset 0 1px 2px rgba(100,100,140,0.10), 0 0 0 2px var(--accent); }
+    .login-btn {
+      width: 100%; height: 46px; border-radius: 13px; border: none;
+      background: linear-gradient(180deg, #3d83ff, var(--accent) 55%, #1463f0);
+      color: white; font-family: var(--sans); font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; margin-top: 10px; letter-spacing: 0.01em;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 2px 0 var(--accent-dark), 0 6px 16px rgba(23,107,255,0.4);
+      transition: transform .06s ease, box-shadow .14s ease;
+    }
+    .login-btn:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 0 var(--accent-dark), 0 9px 22px rgba(23,107,255,0.46); }
+    .login-btn:active { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 0 0 var(--accent-dark), 0 2px 6px rgba(23,107,255,0.32); }
+    .login-divider { color: var(--muted); font-size: 0.72rem; margin: 18px 0; }
+    .login-skip {
+      width: 100%; height: 42px; border-radius: 12px; border: none;
+      background: linear-gradient(180deg, #ffffff, #f4f4fa); color: var(--text2);
+      font-size: 0.82rem; font-weight: 600; cursor: pointer; font-family: var(--sans);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 2px 5px var(--shadow);
+      transition: transform .1s ease, color .14s ease;
+    }
+    .login-skip:hover { color: var(--text); }
+    .login-skip:active { transform: translateY(1px); box-shadow: inset 0 1px 2px var(--shadow); }
+
+    /* ── Stat cards ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+    .stat-card {
+      background: var(--white); border-radius: 16px; padding: 20px 22px;
+      position: relative; overflow: hidden;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 1px 2px var(--shadow-soft),
+        0 4px 12px var(--shadow);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 4px var(--shadow-soft), 0 12px 28px var(--shadow);
+    }
+    .stat-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-light));
+    }
+    .stat-card.s-green::before { background: linear-gradient(90deg, var(--green), #2fe09a); }
+    .stat-card.s-yellow::before { background: linear-gradient(90deg, var(--yellow), #ffc862); }
+    .stat-label { font-size: 0.74rem; color: var(--text2); margin-bottom: 9px; font-weight: 600; }
+    .stat-value { font-size: 1.95rem; font-weight: 800; font-family: var(--mono); letter-spacing: -0.03em; color: var(--navy); }
+    .stat-value.green { color: var(--green-deep); }
+    .stat-value.blue { color: var(--accent); }
+    .stat-value.yellow { color: #d98e0f; }
+    .stat-delta { font-size: 0.68rem; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+
+    /* ── Chart ── */
+    .chart-card {
+      background: var(--white); border-radius: 16px; padding: 22px; margin-bottom: 24px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 4px 12px var(--shadow);
+    }
+    .chart-title { font-size: 0.88rem; font-weight: 700; margin-bottom: 18px; color: var(--text); }
+    .chart-wrap {
+      height: 112px; display: flex; align-items: flex-end; gap: 8px;
+      padding: 10px 4px 0; border-radius: 12px;
+    }
+    .chart-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; justify-content: flex-end; }
+    .chart-bar {
+      width: 100%; max-width: 38px; border-radius: 7px 7px 3px 3px; min-height: 6px;
+      background: linear-gradient(180deg, var(--accent-light), var(--accent));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.5),
+        inset 0 -3px 6px rgba(15,87,218,0.35),
+        0 2px 6px rgba(23,107,255,0.28);
+      transition: filter 0.2s ease, transform 0.2s ease;
+    }
+    .chart-bar:hover { filter: brightness(1.08); transform: scaleY(1.03); transform-origin: bottom; }
+    .chart-label { font-family: var(--mono); font-size: 0.56rem; color: var(--muted); }
+
+    /* ── Tables ── */
+    .table-card {
+      background: var(--white); border-radius: 16px; overflow: hidden;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 4px 12px var(--shadow);
+    }
+    .table-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 17px 22px; border-bottom: 1px solid var(--line);
+    }
+    .table-title { font-size: 0.88rem; font-weight: 700; }
+    .table-action {
+      font-family: var(--mono); font-size: 0.66rem; font-weight: 600; color: var(--accent);
+      cursor: pointer; padding: 6px 12px; border-radius: 8px;
+      background: linear-gradient(180deg, #ffffff, #f4f4fa);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 2px 5px var(--shadow);
+      transition: transform .1s ease, color .14s ease;
+    }
+    .table-action:hover { color: var(--accent-dark); }
+    .table-action:active { transform: translateY(1px); box-shadow: inset 0 1px 2px var(--shadow); }
+    .history-table { width: 100%; border-collapse: collapse; }
+    .history-table th {
+      font-family: var(--mono); font-size: 0.6rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
+      padding: 12px 22px; text-align: left;
+    }
+    .history-table td {
+      padding: 13px 22px; font-size: 0.76rem; color: var(--text2);
+      border: none;
+    }
+    .history-table tbody tr:nth-child(even) { background: var(--row-alt); }
+    .history-table tbody tr { transition: background 0.14s ease; }
+    .history-table tbody tr:hover { background: var(--accent-tint); }
+    .td-code { font-family: var(--mono); font-size: 0.7rem; color: var(--text); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .td-file { font-family: var(--mono); font-size: 0.7rem; color: var(--accent); font-weight: 500; }
+    .td-tokens { font-family: var(--mono); color: #d98e0f; font-weight: 600; }
+    .td-time { font-family: var(--mono); font-size: 0.66rem; }
+    .badge-model {
+      font-family: var(--mono); font-size: 0.6rem; padding: 3px 8px; border-radius: 6px;
+      background: var(--surface2); color: var(--text2); white-space: nowrap; font-weight: 500;
+      box-shadow: inset 0 0 0 1px rgba(100,100,140,0.08);
+    }
+    .empty-state { padding: 46px 20px; text-align: center; color: var(--muted); font-size: 0.84rem; }
+    .empty-state span { font-size: 1.6rem; display: block; margin-bottom: 12px; color: #c4c4da; }
+
+    /* ── Settings ── */
+    .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px; }
+    .settings-card {
+      background: var(--white); border-radius: 16px; padding: 22px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 4px 12px var(--shadow);
+    }
+    .settings-card-title { font-size: 0.84rem; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 9px; color: var(--text); }
+    .settings-card-title svg { width: 16px; height: 16px; color: var(--accent); }
+    .field { margin-bottom: 13px; }
+    .field-label { font-size: 0.7rem; color: var(--text2); margin-bottom: 6px; display: block; font-weight: 600; }
+    .field-input {
+      width: 100%; padding: 10px 12px; border-radius: 10px; border: none;
+      background: var(--surface2); color: var(--text);
+      font-family: var(--mono); font-size: 0.74rem; outline: none;
+      box-shadow: inset 0 1px 2px rgba(100,100,140,0.14), 0 0 0 1px rgba(100,100,140,0.05);
+      transition: box-shadow 0.16s ease;
+    }
+    .field-input:focus { box-shadow: inset 0 1px 2px rgba(100,100,140,0.10), 0 0 0 2px var(--accent); }
+    .save-settings-btn {
+      width: 100%; height: 42px; border-radius: 11px; border: none;
+      background: linear-gradient(180deg, #3d83ff, var(--accent) 55%, #1463f0);
+      color: white; font-family: var(--sans); font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      margin-top: 6px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 2px 0 var(--accent-dark), 0 5px 14px rgba(23,107,255,0.36);
+      transition: transform .06s ease, box-shadow .14s ease;
+    }
+    .save-settings-btn:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 0 var(--accent-dark), 0 8px 20px rgba(23,107,255,0.44); }
+    .save-settings-btn:active { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 0 0 var(--accent-dark), 0 2px 6px rgba(23,107,255,0.3); }
+    .danger-btn {
+      width: 100%; height: 42px; border-radius: 11px; border: none;
+      background: linear-gradient(180deg, #fff, #fdf0f1); color: var(--red);
+      font-family: var(--sans); font-size: 0.82rem; font-weight: 700; cursor: pointer; margin-top: 10px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 2px 6px rgba(255,60,80,0.16);
+      transition: transform .1s ease, box-shadow .14s ease;
+    }
+    .danger-btn:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 4px 12px rgba(255,60,80,0.24); }
+    .danger-btn:active { transform: translateY(1px); }
+
+    .hotkey-display { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 0.74rem; color: var(--text); }
+    .kbd {
+      background: linear-gradient(180deg, #ffffff, #ececf4);
+      border-radius: 7px; padding: 4px 9px; font-size: 0.7rem; font-weight: 600; color: var(--text);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 0 rgba(100,100,140,0.25), 0 2px 4px var(--shadow);
+    }
+
+    .main::-webkit-scrollbar { width: 8px; }
+    .main::-webkit-scrollbar-track { background: transparent; }
+    .main::-webkit-scrollbar-thumb { background: rgba(100,100,140,0.20); border-radius: 5px; border: 2px solid #eef0f7; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .toast {
+      position: fixed; bottom: 22px; right: 22px; z-index: 9999;
+      background: var(--white); border-radius: 12px; padding: 12px 18px;
+      font-size: 0.8rem; font-weight: 600; color: var(--text); font-family: var(--sans);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 8px 28px rgba(100,100,140,0.22);
+      animation: fadeUp 0.22s ease; border-left: 3px solid var(--accent);
+    }
+    .toast.success { border-left-color: var(--green); }
+    .toast.error { border-left-color: var(--red); }
+  </style>
+</head>
+<body>
+
+  <!-- Login overlay -->
+  <div id="loginPage" style="position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;">
+    <div class="titlebar">
+      <div class="tb-brand">
+        <img src="../Favicon.png" alt="Codeply">
+        <span>CODEPLY</span>
+      </div>
+      <div class="tb-controls">
+        <button class="tb-btn close" onclick="window.codeply.dashboardClose()">✕</button>
+      </div>
+    </div>
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="login-logo"><img src="../Favicon.png" alt="C"></div>
+        <div class="login-title">Welcome to Codeply</div>
+        <div class="login-sub">The surgical AI code placement tool</div>
+        <div class="login-field">
+          <label class="login-label">Name</label>
+          <input class="login-input" id="loginName" type="text" placeholder="Your name">
+        </div>
+        <div class="login-field">
+          <label class="login-label">Email (optional)</label>
+          <input class="login-input" id="loginEmail" type="email" placeholder="you@example.com">
+        </div>
+        <button class="login-btn" id="loginBtn">Get Started →</button>
+        <div class="login-divider">or</div>
+        <button class="login-skip" id="loginSkip">Continue as guest</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <div class="tb-brand">
+      <img src="../Favicon.png" alt="Codeply">
+      <span>CODEPLY DASHBOARD</span>
+    </div>
+    <div class="tb-controls">
+      <button class="tb-btn" onclick="window.codeply.dashboardMinimize()">─</button>
+      <button class="tb-btn" onclick="window.codeply.dashboardMaximize()">□</button>
+      <button class="tb-btn close" onclick="window.codeply.dashboardClose()">✕</button>
+    </div>
+  </div>
+
+  <div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="../Favicon.png" alt="C">
+        <div>
+          <span class="sidebar-logo-text">Codeply<span class="sidebar-logo-tag">AI</span></span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <div class="nav-section">Main</div>
+        <div class="nav-item active" data-page="overview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Overview
+        </div>
+        <div class="nav-item" data-page="history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          History
+          <span class="nav-badge" id="historyBadge">0</span>
+        </div>
+
+        <div class="nav-section">Config</div>
+        <div class="nav-item" data-page="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </div>
+      </nav>
+
+      <div class="sidebar-user" id="sidebarUser">
+        <div class="user-avatar" id="userAvatar">?</div>
+        <div>
+          <div class="user-name" id="userName">Guest</div>
+          <div class="user-plan">Free Plan</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+
+      <!-- Overview -->
+      <div class="page active" id="page-overview">
+        <div class="page-header">
+          <div class="page-title">Overview</div>
+          <div class="page-subtitle">Your Codeply usage at a glance</div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Tokens Used</div>
+            <div class="stat-value blue" id="statTokens">0</div>
+            <div class="stat-delta" id="statTokensDelta">All time</div>
+          </div>
+          <div class="stat-card s-green">
+            <div class="stat-label">Total Requests</div>
+            <div class="stat-value green" id="statRequests">0</div>
+            <div class="stat-delta">Analyze calls</div>
+          </div>
+          <div class="stat-card s-yellow">
+            <div class="stat-label">Avg Tokens / Call</div>
+            <div class="stat-value yellow" id="statAvg">–</div>
+            <div class="stat-delta">Efficiency metric</div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">Token Usage — Last 7 Sessions</div>
+          <div class="chart-wrap" id="usageChart"></div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">Recent Activity</div>
+          </div>
+          <div id="recentActivity">
+            <div class="empty-state"><span>◈</span>No requests yet. Use the overlay to get started.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="page" id="page-history">
+        <div class="page-header">
+          <div class="page-title">History</div>
+          <div class="page-subtitle">Every AI analyze request logged here</div>
+        </div>
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">All Requests</div>
+            <div class="table-action" id="clearHistoryBtn">Clear All</div>
+          </div>
+          <div id="historyTableWrap">
+            <div class="empty-state"><span>◈</span>No history yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="page" id="page-settings">
+        <div class="page-header">
+          <div class="page-title">Settings</div>
+          <div class="page-subtitle">Configure your AI provider and preferences</div>
+        </div>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <div class="settings-card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              AI Provider
+            </div>
+            <div class="field">
+              <label class="field-label">Provider</label>
+              <select id="s-provider" class="field-input">
+                <option value="openrouter">OpenRouter</option>
+                <option value="groq">Groq</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label">Model</label>
+              <input id="s-model" class="field-input" type="text" placeholder="openai/gpt-4o-mini">
+            </div>
+            <div class="field">
+              <label class="field-label">API Key</label>
+              <input id="s-apiKey" class="field-input" type="password" placeholder="sk-or-...">
+            </div>
+            <button class="save-settings-btn" id="saveSettingsBtn">Save Configuration</button>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
+              Overlay Hotkey
+            </div>
+            <div class="field">
+              <label class="field-label">Global Shortcut</label>
+              <div class="hotkey-display" style="margin-top:6px">
+                <span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">B</span>
+              </div>
+              <div style="margin-top:10px;font-size:0.7rem;color:var(--text2);line-height:1.5">Summons the overlay from anywhere. Restart app to apply hotkey changes.</div>
+            </div>
+            <div class="field" style="margin-top:16px">
+              <label class="field-label">Hotkey String</label>
+              <input id="s-hotkey" class="field-input" type="text" placeholder="CommandOrControl+Alt+B">
+            </div>
+
+            <div class="settings-card-title" style="margin-top:22px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/><path d="M9 6V4h6v2"/></svg>
+              Danger Zone
+            </div>
+            <button class="danger-btn" id="resetUsageBtn">Reset All Usage Data</button>
+          </div>
+        </div>
+
+        <div class="settings-card" style="margin-bottom:24px">
+          <div class="settings-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            Account
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+            <div class="user-avatar" id="settingsAvatar" style="width:46px;height:46px;border-radius:13px;font-size:1.15rem">?</div>
+            <div>
+              <div id="settingsUserName" style="font-size:0.92rem;font-weight:700">Guest</div>
+              <div id="settingsUserEmail" style="font-size:0.74rem;color:var(--text2);margin-top:2px">No email set</div>
+            </div>
+          </div>
+          <div class="settings-grid" style="margin-bottom:0">
+            <div class="field">
+              <label class="field-label">Display Name</label>
+              <input id="s-name" class="field-input" type="text" placeholder="Your name">
+            </div>
+            <div class="field">
+              <label class="field-label">Email</label>
+              <input id="s-email" class="field-input" type="email" placeholder="you@example.com">
+            </div>
+          </div>
+          <button class="save-settings-btn" id="saveProfileBtn" style="margin-top:14px;width:auto;padding:0 26px">Update Profile</button>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Preview shim: only runs in a plain browser (no Electron bridge). No-ops in the real app. -->
+  <script>
+    if (!window.codeply) {
+      const now = Date.now();
+      const SAMPLE_USAGE = {
+        totalTokens: 48230, totalRequests: 126,
+        history: [
+          { id: 1, timestamp: new Date(now - 3*60000).toISOString(), model: 'openai/gpt-4o-mini', tokens: 412, snippet: 'def verify_token(token: str) -> dict:', file: 'auth.py' },
+          { id: 2, timestamp: new Date(now - 41*60000).toISOString(), model: 'openai/gpt-4o-mini', tokens: 318, snippet: 'const useDebounce = (value, delay) => {', file: 'useDebounce.ts' },
+          { id: 3, timestamp: new Date(now - 2*3600000).toISOString(), model: 'anthropic/claude-3.5-sonnet', tokens: 587, snippet: '@router.post("/checkout")', file: 'routes.py' },
+          { id: 4, timestamp: new Date(now - 5*3600000).toISOString(), model: 'llama-3.1-8b-instant', tokens: 224, snippet: 'func (s *Server) handleWS(w http.Resp', file: 'server.go' },
+          { id: 5, timestamp: new Date(now - 26*3600000).toISOString(), model: 'openai/gpt-4o-mini', tokens: 463, snippet: '.btn-apply:active { transform: trans', file: 'overlay.css' },
+          { id: 6, timestamp: new Date(now - 28*3600000).toISOString(), model: 'openai/gpt-4o-mini', tokens: 390, snippet: 'export async function migrate(db) {', file: 'migrate.ts' },
+          { id: 7, timestamp: new Date(now - 50*3600000).toISOString(), model: 'anthropic/claude-3.5-sonnet', tokens: 521, snippet: 'impl Cache<K, V> {', file: 'cache.rs' },
+        ],
+      };
+      window.codeply = {
+        async getSettings() { return { provider: 'openrouter', model: 'openai/gpt-4o-mini', apiKey: '', hotkey: 'CommandOrControl+Alt+B', user: { name: 'Dev', email: 'dev@codeply.online' } }; },
+        async getUsage() { return SAMPLE_USAGE; },
+        async saveSettings() { return { success: true }; },
+        async resetUsage() { SAMPLE_USAGE.totalTokens = 0; SAMPLE_USAGE.totalRequests = 0; SAMPLE_USAGE.history = []; return { success: true }; },
+        dashboardClose() {}, dashboardMinimize() {}, dashboardMaximize() {},
+      };
+    }
+  </script>
+  <script src="./dashboard.js"></script>
+</body>
+</html>

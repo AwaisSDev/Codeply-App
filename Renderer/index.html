@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Codeply</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --white: #ffffff;
+      --surface: #f8f8fc;
+      --surface2: #f0f0f8;
+      --well: #f0f0f8;
+      --accent: #176bff;
+      --accent-light: #3d83ff;
+      --accent-dark: #0f57da;
+      --green: #00c46e;
+      --green-deep: #00a85e;
+      --red: #ff3c50;
+      --text: #0a0a14;
+      --navy: #11183a;
+      --text2: #6b6b8a;
+      --muted: #9a9ab4;
+      --line: rgba(10,10,20,0.06);
+      --shadow: rgba(100,100,140,0.12);
+      --shadow-soft: rgba(100,100,140,0.08);
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'DM Sans', system-ui, sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      font-family: var(--sans);
+      overflow: hidden;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* When running outside Electron (browser preview), paint a soft desk surface so the lift reads */
+    body.preview {
+      background:
+        radial-gradient(120% 90% at 80% 0%, #ffffff 0%, #eef0f7 55%, #e6e8f2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+    }
+
+    /* ── Popup card ── */
+    .popup {
+      width: 380px;
+      height: 500px;
+      background: var(--white);
+      border-radius: 22px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 0 0 1px rgba(100,100,140,0.05),
+        0 1px 2px var(--shadow-soft),
+        0 10px 24px var(--shadow),
+        0 30px 60px rgba(100,100,140,0.14);
+    }
+
+    /* ── Header / titlebar ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 15px;
+      -webkit-app-region: drag;
+      background: linear-gradient(180deg, #ffffff 0%, #fbfbfe 100%);
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+
+    .dots { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+    .dot {
+      width: 12px; height: 12px; border-radius: 50%; border: none;
+      cursor: pointer; transition: transform .12s ease, filter .12s ease;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 2px rgba(100,100,140,0.25);
+    }
+    .dot:hover { transform: scale(1.12); filter: brightness(1.05); }
+    .dot:active { transform: scale(0.95); }
+    .dot.red { background: linear-gradient(180deg,#ff7268,#ff5f56); }
+    .dot.yellow { background: linear-gradient(180deg,#ffd05a,#ffbd2e); }
+    .dot.green { background: linear-gradient(180deg,#4ad968,#27c93f); }
+
+    .brand {
+      display: flex; align-items: center; gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+    .brand img {
+      width: 24px; height: 24px; border-radius: 7px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px var(--shadow);
+    }
+    .brand-name { font-size: 0.92rem; font-weight: 800; color: var(--text); letter-spacing: -0.02em; }
+    .brand-tag {
+      font-family: var(--mono); font-size: 0.56rem; font-weight: 600; color: var(--accent);
+      background: #e8efff; padding: 2px 6px; border-radius: 5px; letter-spacing: 0.04em;
+      box-shadow: inset 0 0 0 1px rgba(23,107,255,0.12);
+    }
+
+    .header-actions { display: flex; gap: 7px; -webkit-app-region: no-drag; }
+    .icon-btn {
+      width: 28px; height: 28px; border-radius: 9px; border: none;
+      background: linear-gradient(180deg, #ffffff, #f4f4fa);
+      color: var(--text2); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .12s ease, box-shadow .12s ease, color .12s ease;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 1px 2px var(--shadow-soft),
+        0 2px 5px var(--shadow);
+    }
+    .icon-btn:hover { color: var(--accent); transform: translateY(-1px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 4px var(--shadow-soft), 0 5px 12px var(--shadow); }
+    .icon-btn:active { transform: translateY(1px);
+      box-shadow: inset 0 1px 2px var(--shadow), 0 1px 2px var(--shadow-soft); }
+    .icon-btn svg { width: 14px; height: 14px; }
+
+    /* ── Auto-detect file pill ── */
+    .detect-row {
+      padding: 11px 15px 4px;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .detect-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px 6px 11px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f6f6fb);
+      font-family: var(--mono); font-size: 0.7rem; font-weight: 500;
+      color: var(--text);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 1px 2px var(--shadow-soft),
+        0 2px 6px var(--shadow);
+      max-width: 100%;
+      transition: color .2s ease;
+    }
+    .detect-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(0,196,110,0.16), inset 0 1px 0 rgba(255,255,255,0.4);
+      flex-shrink: 0;
+      animation: pulse-dot 2.4s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(0,196,110,0.16), inset 0 1px 0 rgba(255,255,255,0.4); }
+      50% { box-shadow: 0 0 0 5px rgba(0,196,110,0.05), inset 0 1px 0 rgba(255,255,255,0.4); }
+    }
+    .detect-file {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .detect-meta {
+      font-size: 0.6rem; color: var(--muted); letter-spacing: 0.02em;
+      padding-left: 7px; margin-left: 1px; border-left: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    /* No-file state */
+    .detect-pill.empty { color: var(--muted); }
+    .detect-pill.empty .detect-dot {
+      background: transparent;
+      box-shadow: inset 0 0 0 1.5px var(--muted);
+      animation: none;
+    }
+    .detect-pill.empty .detect-meta { display: none; }
+
+    /* ── Code preview well ── */
+    .preview-wrap {
+      position: relative; margin: 11px 15px 0; flex-shrink: 0;
+      height: 150px; background: var(--well); border-radius: 13px; overflow: hidden;
+      box-shadow:
+        inset 0 1px 3px rgba(100,100,140,0.16),
+        inset 0 0 0 1px rgba(100,100,140,0.05);
+    }
+    .line-numbers {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 36px;
+      background: linear-gradient(90deg, #eaeaf4, #eef0f7);
+      border-right: 1px solid rgba(100,100,140,0.10);
+      box-shadow: inset -1px 0 0 rgba(255,255,255,0.7);
+      display: flex; flex-direction: column; padding: 13px 0;
+      z-index: 2; pointer-events: none;
+    }
+    .line-num {
+      font-family: var(--mono); font-size: 0.6rem; font-weight: 500; color: #b3b3cc;
+      text-align: right; padding-right: 8px; line-height: 1.5rem; height: 1.5rem;
+      transition: color 0.3s, font-weight 0.3s;
+    }
+    .line-num.highlight { color: var(--accent); font-weight: 700; }
+
+    pre#preview {
+      margin: 0; padding: 13px 12px 13px 46px;
+      color: #2a2a44; font-family: var(--mono); font-size: 0.68rem; font-weight: 500;
+      line-height: 1.5rem; height: 100%; overflow: auto;
+      white-space: pre; position: relative; z-index: 1;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+    }
+    pre#preview.placeholder { color: var(--muted); font-weight: 400; }
+
+    /* ── Apply animation overlays ── */
+    .code-line-overlay {
+      position: absolute; left: 37px; right: 0; pointer-events: none;
+      z-index: 10; transition: opacity 0.4s;
+    }
+    .overlay-red {
+      background: rgba(255,60,80,0.10);
+      border-left: 2px solid var(--red);
+    }
+    .overlay-green {
+      background: rgba(0,196,110,0.09);
+      border-left: 2px solid var(--green);
+    }
+
+    /* ── Lang badge ── */
+    .preview-footer {
+      position: absolute; bottom: 8px; right: 8px;
+      display: flex; gap: 6px; align-items: center; z-index: 5;
+    }
+    .lang-badge {
+      font-family: var(--mono); font-size: 0.58rem; font-weight: 600; color: var(--text2);
+      background: linear-gradient(180deg, #ffffff, #f4f4fa);
+      padding: 3px 8px; border-radius: 6px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px var(--shadow);
+    }
+
+    /* ── Status / Analysis Result ── */
+    .status-box {
+      margin: 12px 15px 0; padding: 11px 13px;
+      border-radius: 13px;
+      background: linear-gradient(180deg, #ffffff, #fafafe);
+      flex-shrink: 0; min-height: 60px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.9),
+        0 1px 2px var(--shadow-soft),
+        0 3px 8px var(--shadow);
+    }
+    .status-row { display: flex; align-items: flex-start; gap: 10px; }
+    .status-icon {
+      width: 24px; height: 24px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; font-size: 0.72rem; margin-top: 1px; font-weight: 700;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px var(--shadow);
+    }
+    .status-icon.idle { background: linear-gradient(180deg,#f4f4fa,#ececf4); color: var(--muted); }
+    .status-icon.analyzing { background: linear-gradient(180deg,#e8efff,#dbe7ff); color: var(--accent); }
+    .status-icon.applying { background: linear-gradient(180deg,#e8efff,#dbe7ff); color: var(--accent); }
+    .status-icon.ready { background: linear-gradient(180deg,#dcf7ea,#c8f1dc); color: var(--green-deep); }
+    .status-icon.error { background: linear-gradient(180deg,#ffe2e6,#ffd2d8); color: var(--red); }
+
+    .status-text { flex: 1; min-width: 0; }
+    .status-action {
+      font-size: 0.76rem; font-weight: 700; color: var(--text);
+      font-family: var(--mono); letter-spacing: -0.01em;
+    }
+    .status-reason { font-size: 0.68rem; color: var(--text2); margin-top: 3px; line-height: 1.45; font-weight: 400; }
+
+    .confidence-bar {
+      margin-top: 9px; height: 5px; background: var(--surface2);
+      border-radius: 3px; overflow: hidden;
+      box-shadow: inset 0 1px 2px rgba(100,100,140,0.18);
+    }
+    .confidence-fill {
+      height: 100%; border-radius: 3px; width: 0%;
+      background: linear-gradient(180deg, #18d586, var(--green));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+      transition: width 0.6s ease;
+    }
+    .confidence-fill.low { background: linear-gradient(180deg,#ff5c6e,var(--red)); }
+    .confidence-fill.mid { background: linear-gradient(180deg,#ffd05a,#ffbd2e); }
+
+    /* ── Settings panel ── */
+    .settings-panel {
+      display: none; flex-direction: column; gap: 8px;
+      margin: 12px 15px 0; padding: 12px;
+      border-radius: 13px;
+      background: var(--surface2);
+      box-shadow: inset 0 1px 3px rgba(100,100,140,0.14), inset 0 0 0 1px rgba(100,100,140,0.04);
+      flex-shrink: 0;
+    }
+    .settings-panel.open { display: flex; }
+    .settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .settings-input {
+      width: 100%; padding: 8px 10px; border-radius: 9px; border: none;
+      background: #ffffff; color: var(--text);
+      font-family: var(--mono); font-size: 0.68rem; outline: none;
+      box-shadow: inset 0 1px 2px rgba(100,100,140,0.12), 0 0 0 1px rgba(100,100,140,0.06);
+      transition: box-shadow .15s ease;
+    }
+    .settings-input:focus { box-shadow: inset 0 1px 2px rgba(100,100,140,0.10), 0 0 0 2px var(--accent); }
+    .save-btn {
+      padding: 8px 14px; border-radius: 9px; border: none;
+      background: linear-gradient(180deg, #ffffff, #f4f4fa); color: var(--text2);
+      font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px var(--shadow-soft), 0 2px 5px var(--shadow);
+      transition: transform .1s ease, color .15s ease, box-shadow .12s ease;
+    }
+    .save-btn:hover { color: var(--green-deep); }
+    .save-btn:active { transform: translateY(1px); box-shadow: inset 0 1px 2px var(--shadow); }
+
+    /* ── Footer actions ── */
+    .actions {
+      display: flex; gap: 10px; padding: 13px 15px 16px;
+      margin-top: auto; flex-shrink: 0;
+    }
+    .btn {
+      flex: 1; height: 42px; border: none; border-radius: 13px;
+      font-family: var(--sans); font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.01em;
+      transition: transform .05s ease, box-shadow .12s ease, background .15s ease;
+    }
+    /* Analyze: white extruded, blue text */
+    .btn-analyze {
+      background: linear-gradient(180deg, #ffffff, #f2f2f9);
+      color: var(--accent);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.95),
+        0 1px 2px var(--shadow-soft),
+        0 3px 8px var(--shadow);
+    }
+    .btn-analyze:hover:not(:disabled) {
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 2px 4px var(--shadow-soft), 0 6px 14px var(--shadow);
+    }
+    .btn-analyze:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px var(--shadow), 0 1px 2px var(--shadow-soft);
+    }
+    /* Apply: solid blue extruded, lighter top face + darker bottom */
+    .btn-apply {
+      color: #fff;
+      background: linear-gradient(180deg, #3d83ff 0%, var(--accent) 55%, #1463f0 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.45),
+        0 2px 0 var(--accent-dark),
+        0 4px 12px rgba(23,107,255,0.40);
+    }
+    .btn-apply:hover:not(:disabled) {
+      background: linear-gradient(180deg, #4d8eff 0%, #2174ff 55%, #1868f5 100%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 0 var(--accent-dark), 0 7px 18px rgba(23,107,255,0.46);
+    }
+    .btn-apply:active:not(:disabled) {
+      transform: translateY(2px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 0 0 var(--accent-dark), 0 2px 6px rgba(23,107,255,0.34);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
+    .btn-apply:disabled {
+      background: linear-gradient(180deg,#bcd0f5,#a9c2ef);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 0 #95b2e8;
+    }
+
+    /* ── Scrollbars ── */
+    pre::-webkit-scrollbar { width: 6px; height: 6px; }
+    pre::-webkit-scrollbar-track { background: transparent; }
+    pre::-webkit-scrollbar-thumb { background: rgba(100,100,140,0.22); border-radius: 4px; }
+
+    @keyframes rotate { to { transform: rotate(360deg); } }
+    .spin-icon { animation: rotate 1s linear infinite; display: inline-block; }
+    .spinning svg { animation: rotate 0.5s ease; }
+  </style>
+</head>
+<body>
+  <main class="popup">
+
+    <header class="header">
+      <div class="dots">
+        <button class="dot red" id="dismissBtn" title="Dismiss"></button>
+        <button class="dot yellow" id="minimizeBtn" title="Minimize"></button>
+        <button class="dot green" id="dashBtn" title="Open Dashboard"></button>
+      </div>
+      <div class="brand">
+        <img src="../Favicon.png" alt="Codeply">
+        <span class="brand-name">Codeply</span>
+        <span class="brand-tag">AI</span>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" id="reloadBtn" title="Sync clipboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+            <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="settingsBtn" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Auto-detected active file (read-only) -->
+    <div class="detect-row">
+      <div class="detect-pill empty" id="detectPill" title="Active file auto-detected from your IDE">
+        <span class="detect-dot"></span>
+        <span class="detect-file" id="detectFile">No active file detected</span>
+        <span class="detect-meta" id="detectMeta"></span>
+      </div>
+    </div>
+
+    <!-- Code preview well -->
+    <div class="preview-wrap" id="previewWrap">
+      <div class="line-numbers" id="lineNumbers"></div>
+      <pre id="preview" class="placeholder">// Copy AI-generated code, then hit Analyze…</pre>
+      <div class="preview-footer">
+        <span class="lang-badge" id="langBadge">–</span>
+      </div>
+    </div>
+
+    <!-- Status / Result -->
+    <div class="status-box" id="statusBox">
+      <div class="status-row">
+        <div class="status-icon idle" id="statusIcon">◈</div>
+        <div class="status-text">
+          <div class="status-action" id="statusAction">Waiting for code</div>
+          <div class="status-reason" id="statusReason">Copy code from anywhere, then hit Analyze</div>
+        </div>
+      </div>
+      <div class="confidence-bar" id="confidenceBar" style="display:none">
+        <div class="confidence-fill" id="confidenceFill"></div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="settings-panel" id="settingsPanel">
+      <div class="settings-row">
+        <select id="provider" class="settings-input">
+          <option value="openrouter">OpenRouter</option>
+          <option value="groq">Groq</option>
+        </select>
+        <input id="model" class="settings-input" type="text" placeholder="Model">
+      </div>
+      <div class="settings-row">
+        <input id="apiKey" class="settings-input" type="password" placeholder="API Key">
+        <button class="save-btn" id="saveBtn">Save</button>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn btn-analyze" id="analyzeBtn">Analyze</button>
+      <button class="btn btn-apply" id="applyBtn" disabled>Apply</button>
+    </div>
+
+  </main>
+
+  <!-- Preview shim: only runs in a plain browser (no Electron bridge). No-ops in the real app. -->
+  <script>
+    if (!window.codeply) {
+      document.body.classList.add('preview');
+      const SAMPLE_CODE =
+`def verify_token(token: str) -> dict:
+    payload = jwt.decode(
+        token,
+        SECRET_KEY,
+        algorithms=["HS256"],
+    )
+    if payload["exp"] < time.time():
+        raise TokenExpired()
+    return payload`;
+      const SAMPLE_FILE =
+`import jwt, time
+from .errors import TokenExpired
+
+SECRET_KEY = os.environ["JWT_SECRET"]
+
+def create_token(user_id: int) -> str:
+    return jwt.encode(
+        {"sub": user_id, "exp": time.time() + 3600},
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+
+def verify_token(token):
+    return jwt.decode(token, SECRET_KEY)
+
+def refresh(token: str) -> str:
+    data = verify_token(token)
+    return create_token(data["sub"])`;
+      let _snip = null, _file = null;
+      window.codeply = {
+        onSnippetUpdate(cb) { _snip = cb; },
+        onActiveFile(cb) { _file = cb; },
+        refreshSnippet() {
+          _snip && _snip({ text: SAMPLE_CODE, language: 'Python',
+            summary: 'Hardened token check copied — hit Analyze to place it.' });
+        },
+        requestActiveFile() {
+          _file && _file({ path: '/Users/dev/api/auth.py', name: 'auth.py',
+            ide: 'VS Code', content: SAMPLE_FILE });
+        },
+        async analyzeSnippet() {
+          await new Promise(r => setTimeout(r, 1100));
+          return { success: true, result: { action: 'replace', startLine: 15, endLine: 16,
+            reason: 'Replaces the unguarded verify_token with the hardened version.',
+            confidence: 94, code: SAMPLE_CODE } };
+        },
+        async applyToFile() { await new Promise(r => setTimeout(r, 300)); return { success: true }; },
+        async readFile() { return { content: SAMPLE_FILE, name: 'auth.py' }; },
+        async getSettings() { return { provider: 'openrouter', model: 'openai/gpt-4o-mini', apiKey: '' }; },
+        async saveSettings() { return { success: true }; },
+        dismiss() {}, minimize() {}, openDashboard() { location.href = '../Dashboard/index.html'; },
+      };
+    }
+  </script>
+  <script src="./renderer.js"></script>
+</body>
+</html>

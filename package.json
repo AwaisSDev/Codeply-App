@@ -1,0 +1,22 @@
+{
+  "name": "codeply",
+  "version": "1.0.0",
+  "description": "Codeply AI — Surgical code placement overlay",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "online.codeply.app",
+    "productName": "Codeply",
+    "files": ["**/*", "!node_modules", "!*.md"],
+    "win": { "target": "nsis", "icon": "Favicon.png" },
+    "mac": { "target": "dmg", "icon": "Favicon.png" },
+    "linux": { "target": "AppImage" }
+  },
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}
