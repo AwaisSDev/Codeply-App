@@ -51,8 +51,8 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "./mac-assets/Favicon.png"
-    }
+      "icon": "assets/Favicon.png"
+    },
     "linux": {
       "target": "AppImage"
     },
