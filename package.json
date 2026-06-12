@@ -36,7 +36,7 @@
       ],
       "icon": "assets/Favicon.ico",
       "requestedExecutionLevel": "asInvoker",
-      "artifactName": "Codeply Setup.exe"
+      "artifactName": "Codeply-Setup.exe"
     },
     "nsis": {
       "oneClick": false,
@@ -51,7 +51,8 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/Favicon.png"
+      "icon": "assets/Favicon.png",
+      "artifactName": "Codeply.dmg"
     },
     "linux": {
       "target": "AppImage"
