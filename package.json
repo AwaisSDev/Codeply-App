@@ -33,7 +33,8 @@
         }
       ],
       "icon": "assets/Favicon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "artifactName": "Codeply Setup.exe"
     },
     "nsis": {
       "oneClick": false,
