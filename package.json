@@ -29,7 +29,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/Favicon.ico",
@@ -57,12 +59,12 @@
     "publish": {
       "provider": "github",
       "owner": "AwaissDev",
-      "repo": "Codeply"
+      "repo": "Codeply-App"
     }
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
-    "electron-updater": "^6.1.0",
+    "electron-updater": "^6.8.9",
     "ws": "^8.21.0"
   },
   "devDependencies": {

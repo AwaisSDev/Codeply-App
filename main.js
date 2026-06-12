@@ -1846,6 +1846,7 @@ ipcMain.handle('file:read', (_, filePath) => {
 // ─── App Boot ──────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
   app.on('before-quit', () => { app.isQuiting = true; });
 
   const launchUrl = getDeepLinkFromArgv();
