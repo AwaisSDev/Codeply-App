@@ -2,18 +2,67 @@
   "name": "codeply",
   "version": "1.0.0",
   "description": "Codeply AI — Surgical code placement overlay",
+  "author": "Awais Siddique",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "dist": "electron-builder --win"
   },
   "build": {
     "appId": "online.codeply.app",
     "productName": "Codeply",
-    "files": ["**/*", "!node_modules", "!*.md"],
-    "win": { "target": "nsis", "icon": "Favicon.png" },
-    "mac": { "target": "dmg", "icon": "Favicon.png" },
-    "linux": { "target": "AppImage" }
+    "copyright": "Copyright © 2025 Codeply",
+    "extraMetadata": {
+      "author": "Codeply"
+    },
+    "files": [
+      "**/*",
+      "!node_modules/.cache",
+      "!*.md",
+      "!*.bak",
+      "!dist",
+      "!out"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/Favicon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Codeply",
+      "installerIcon": "assets/Favicon.ico",
+      "uninstallerIcon": "assets/Favicon.ico",
+      "installerHeaderIcon": "assets/Favicon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/Favicon.ico"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "AwaissDev",
+      "repo": "Codeply"
+    }
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "electron-updater": "^6.1.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "electron": "^29.0.0",

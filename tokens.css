@@ -1,0 +1,85 @@
+/* ============================================================
+   CODEPLY — Shared design tokens
+   Google-rainbow palette · Plus Jakarta Sans · Roboto Mono
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ── Google rainbow ── */
+  --blue:        #4285F4;
+  --blue-600:    #1a6ff0;
+  --blue-700:    #1559c6;
+  --blue-tint:   #e9f1ff;
+  --blue-tint2:  #d6e6ff;
+
+  --red:         #EA4335;
+  --red-600:     #d62f21;
+  --red-tint:    #ffeae8;
+
+  --yellow:      #FBBC04;
+  --yellow-ink:  #E38A00;
+  --yellow-tint: #fff3d4;
+
+  --green:       #34A853;
+  --green-600:   #1f8f43;
+  --green-tint:  #e3f6e9;
+
+  /* ── Neutrals ── */
+  --ink:      #1d2230;
+  --ink-2:    #565f72;
+  --ink-3:    #8b93a4;
+  --line:     #e7eaf1;
+  --line-2:   #f0f2f7;
+  --bg:       #f5f7fc;
+  --surface:  #ffffff;
+  --surface-2:#f8f9fd;
+
+  /* ── Type ── */
+  --sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --mono: 'Roboto Mono', ui-monospace, monospace;
+
+  /* ── Radius ── */
+  --r-sm:   8px;
+  --r-md:   12px;
+  --r-lg:   18px;
+  --r-xl:   24px;
+  --r-pill: 999px;
+
+  /* ── Shadows ── */
+  --sh-sm:    0 1px 2px rgba(29,34,48,.06), 0 1px 3px rgba(29,34,48,.08);
+  --sh-md:    0 4px 12px rgba(29,34,48,.07), 0 2px 4px rgba(29,34,48,.05);
+  --sh-lg:    0 18px 48px rgba(29,34,48,.14), 0 4px 12px rgba(29,34,48,.08);
+  --sh-color: 0 8px 24px rgba(66,133,244,.28);
+
+  /* ── Compatibility aliases for existing JS/CSS ── */
+  --accent:       #4285F4;
+  --accent-hover: #1a6ff0;
+  --text:         #1d2230;
+  --text2:        #565f72;
+  --muted:        #8b93a4;
+  --surface2:     #f8f9fd;
+  --border:       #e7eaf1;
+  --border-light: #f0f2f7;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── 4-colour rainbow strip ── */
+.rainbow-strip { display: flex; height: 4px; border-radius: var(--r-pill); overflow: hidden; }
+.rainbow-strip > span { flex: 1; }
+.rainbow-strip > span:nth-child(1) { background: var(--blue); }
+.rainbow-strip > span:nth-child(2) { background: var(--red); }
+.rainbow-strip > span:nth-child(3) { background: var(--yellow); }
+.rainbow-strip > span:nth-child(4) { background: var(--green); }
+
+.rainbow-text {
+  background: linear-gradient(92deg, var(--blue) 0%, var(--green) 34%, var(--yellow-ink) 64%, var(--red) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}

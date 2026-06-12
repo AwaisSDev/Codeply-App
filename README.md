@@ -24,7 +24,7 @@ npm start
 ## How It Works
 
 1. **Copy** AI-generated code from ChatGPT/Claude anywhere
-2. **Hit** `Ctrl+Alt+B` → overlay appears top-right
+2. **Hit** `Alt+C` → overlay appears top-right
 3. **Codeply auto-detects** the file you're editing by reading the focused IDE's window title — shown as a read-only pill (● auth.py). No browsing, no file picker.
 4. **Hit Analyze** → AI finds exact line placement (preserves your code unchanged)
 5. **Hit Apply** → red overlay fades old lines, typewriter pastes new code with green highlight
