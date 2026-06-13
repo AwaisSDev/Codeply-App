@@ -980,7 +980,7 @@ function wireAllHandlers() {
     if (!otpPending) return;
     clearLoginError();
     const code = (document.getElementById('otpCode').value || '').replace(/\D/g, '');
-    if (code.length < 6) { setLoginError('Enter the 6-digit code from your email.', 'otp'); return; }
+    if (code.length < 6) { setLoginError('Enter the 8-digit code from your email.', 'otp'); return; }
     const btn = document.getElementById('verifyOtpBtn');
     btn.disabled = true; btn.textContent = 'Verifying…';
     try {
@@ -1016,7 +1016,7 @@ function wireAllHandlers() {
   bindClick('otpBackBtn', () => hideOtpForm());
 
   document.getElementById('otpCode')?.addEventListener('input', e => {
-    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 8);
   });
   document.getElementById('otpCode')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('verifyOtpBtn')?.click();
@@ -1133,14 +1133,22 @@ function wireAllHandlers() {
       tokenCap:     newTokenCap,
       modelRanking: newRanking,
     };
-    const result = await codeply.saveSettings(updated);
-    settings = { ...settings, ...updated };
-    if (result && result.success === false) {
-      showToast(result.error || 'Cloud sync failed', 'error');
-      return;
+    const btn = document.getElementById('saveSettingsBtn');
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const result = await codeply.saveSettings(updated);
+      if (result && result.success === false) {
+        showToast(result.error || 'Cloud sync failed', 'error');
+        return;
+      }
+      settings = { ...settings, ...updated };
+      renderTokenCapBar();
+      // Settings now apply live — the popup hot-reloads the key/model instantly.
+      showToast('Settings applied — no restart needed', 'success');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
     }
-    const modal = document.getElementById('restartModal');
-    if (modal) modal.style.display = 'flex';
   });
 
   bindClick('restartModalClose', () => {

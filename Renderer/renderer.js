@@ -719,6 +719,16 @@ bindClick('popupPaywallBtn', () => codeply.openDashboard());
     // Run cap check on startup so analyzeBtn is blocked immediately if over cap
     await checkTokenCap();
 
+    // Hot-reload the API key + model list the moment Settings are saved in the
+    // dashboard — no app restart required.
+    codeply.onSettingsUpdated?.(async (s) => {
+      try {
+        if (s) _apiKey = s.apiKey || _apiKey;
+        await loadModels();
+        await checkTokenCap();
+      } catch (e) { console.error('[Codeply popup] settings hot-reload failed:', e); }
+    });
+
     try {
       const w = await codeply.getWatch();
       if (w && w.folder) {

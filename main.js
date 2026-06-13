@@ -919,10 +919,18 @@ ipcMain.handle('settings:get', () => savedSettings);
 
 ipcMain.handle('settings:save', async (_, settings) => {
   const prevFolder = savedSettings.watchFolder;
+  const prevHotkey = savedSettings.hotkey;
   savedSettings = { ...savedSettings, ...settings };
   persistSettings();
   if (settings.watchFolder !== undefined && settings.watchFolder !== prevFolder) {
     startFolderWatch();
+  }
+  // Re-register the global hotkey live so it applies without a restart.
+  if (settings.hotkey !== undefined && settings.hotkey !== prevHotkey) {
+    try {
+      globalShortcut.unregisterAll();
+      globalShortcut.register(savedSettings.hotkey || 'Alt+C', togglePopup);
+    } catch (e) { console.warn('[hotkey] live re-register failed:', e.message); }
   }
   // Push API key + AI settings to the cloud if user is logged in
   const userId = await getLoggedInUserId();
@@ -932,8 +940,20 @@ ipcMain.handle('settings:save', async (_, settings) => {
       return { success: false, error: cloudResult.error };
     }
   }
+  // Tell the popup + dashboard to pull the new API key / model list immediately,
+  // so the next AI request uses them — no app restart needed.
+  broadcastSettingsUpdated();
   return { success: true };
 });
+
+// Notify all open windows that settings changed so they can hot-reload.
+function broadcastSettingsUpdated() {
+  [popupWindow, dashboardWindow].forEach(w => {
+    if (w && !w.isDestroyed()) {
+      try { w.webContents.send('settings:updated', savedSettings); } catch {}
+    }
+  });
+}
 
 // ─── Watch-folder controls ──────────────────────────────────────────────────────
 ipcMain.handle('watch:get', () => ({
@@ -1801,7 +1821,7 @@ ipcMain.handle('auth:verify-otp', async (_, { email, token, mode }) => {
   await ensureSupabaseReady();
   if (!supabase) return { success: false, error: 'Supabase not ready' };
   const code = String(token || '').replace(/\s+/g, '');
-  if (!email || !code) return { success: false, error: 'Enter the 6-digit code we emailed you.' };
+  if (!email || !code) return { success: false, error: 'Enter the 8-digit code we emailed you.' };
   try {
     const primaryType = mode === 'signup' ? 'signup' : 'email';
     let { data, error } = await supabase.auth.verifyOtp({ email, token: code, type: primaryType });

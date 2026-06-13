@@ -1,6 +1,6 @@
 {
   "name": "codeply",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Codeply AI — Surgical code placement overlay",
   "author": "Awais Siddique",
   "main": "main.js",

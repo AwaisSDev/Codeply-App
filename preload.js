@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('codeply', {
   // Settings
   getSettings() { return ipcRenderer.invoke('settings:get'); },
   saveSettings(s) { return ipcRenderer.invoke('settings:save', s); },
+  onSettingsUpdated(cb) { ipcRenderer.on('settings:updated', (_, s) => cb(s)); },
 
   // Usage
   getUsage() { return ipcRenderer.invoke('usage:get'); },
