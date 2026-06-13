@@ -1709,6 +1709,21 @@ function formatSupabaseAuthError(raw, context = 'login') {
   return msg || 'Failed to sign in.';
 }
 
+// Friendly errors for the 6-digit email code (OTP) step.
+function formatOtpError(raw) {
+  let msg = typeof raw === 'string' ? raw : (raw?.message || raw?.msg || '');
+  try { const p = JSON.parse(msg); msg = p.msg || p.message || msg; } catch {}
+  const lower = String(msg).toLowerCase();
+  if (lower.includes('expired')) return 'That code has expired. Tap “Resend code” to get a fresh one.';
+  if (lower.includes('rate') || lower.includes('too many') || lower.includes('seconds')) {
+    return 'Please wait a moment before requesting another code.';
+  }
+  if (lower.includes('invalid') || lower.includes('token') || lower.includes('otp')) {
+    return 'Incorrect code. Double-check the 6 digits and try again.';
+  }
+  return msg || 'Could not verify the code. Try again.';
+}
+
 async function startOAuthSignIn(provider) {
   await ensureSupabaseReady();
   if (!supabase) return { success: false, error: 'Supabase not ready' };
@@ -1730,18 +1745,27 @@ ipcMain.handle('auth:sign-in-google', async () => startOAuthSignIn('google'));
 
 ipcMain.handle('auth:sign-in-github', async () => startOAuthSignIn('github'));
 
+// Email + password login is two-factor: validate the password, then email a
+// fresh 6-digit code. The user isn't logged in until they verify that code.
 ipcMain.handle('auth:sign-in-email', async (_, { email, password }) => {
   await ensureSupabaseReady();
   if (!supabase) return { success: false, error: 'Supabase not ready' };
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    // Step 1 — validate the password.
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { success: false, error: formatSupabaseAuthError(error, 'login') };
-    const user = data.user;
-    const mapped = await persistAuthUser(user); // persistAuthUser now calls fetchCloudSettings
-    return { success: true, user: mapped };
+    // Discard the password-only session; login completes only after OTP verify.
+    try { await supabase.auth.signOut({ scope: 'local' }); } catch {}
+    // Step 2 — email a 6-digit code.
+    const { error: otpErr } = await supabase.auth.signInWithOtp({
+      email, options: { shouldCreateUser: false }
+    });
+    if (otpErr) return { success: false, error: formatOtpError(otpErr) };
+    return { success: true, needsOtp: true, email, mode: 'login' };
   } catch (e) { return { success: false, error: formatSupabaseAuthError(e, 'login') }; }
 });
 
+// Sign up, then require the emailed 6-digit code before the account is active.
 ipcMain.handle('auth:sign-up-email', async (_, { email, password, name }) => {
   await ensureSupabaseReady();
   if (!supabase) return { success: false, error: 'Supabase not ready' };
@@ -1757,20 +1781,63 @@ ipcMain.handle('auth:sign-up-email', async (_, { email, password, name }) => {
       return { success: false, error: 'An account with this email already exists. Try signing in.' };
     }
 
-    const user = data.user;
-    if (data.session && user) {
-      const mapped = await persistAuthUser(user);
-      return { success: true, user: mapped, needsConfirmation: false };
+    const niceName = name || (email ? email.split('@')[0] : '');
+
+    // If a session came back, email confirmation is OFF on the project. We still
+    // want a 6-digit code, so drop the session and email a login code instead.
+    if (data.session) {
+      try { await supabase.auth.signOut({ scope: 'local' }); } catch {}
+      try { await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } }); } catch {}
+      return { success: true, needsOtp: true, email, mode: 'login', name: niceName };
     }
-    if (user) {
-      return {
-        success: true,
-        user: { id: user.id, email: user.email, name: name || user.email.split('@')[0], avatar: '' },
-        needsConfirmation: true
-      };
-    }
-    return { success: false, error: 'Failed to create account. Please try again.' };
+
+    // Normal path: a confirmation email containing the 6-digit token was sent.
+    return { success: true, needsOtp: true, email, mode: 'signup', name: niceName };
   } catch (e) { return { success: false, error: formatSupabaseAuthError(e, 'signup') }; }
+});
+
+// Verify the 6-digit code for either signup confirmation or login 2FA.
+ipcMain.handle('auth:verify-otp', async (_, { email, token, mode }) => {
+  await ensureSupabaseReady();
+  if (!supabase) return { success: false, error: 'Supabase not ready' };
+  const code = String(token || '').replace(/\s+/g, '');
+  if (!email || !code) return { success: false, error: 'Enter the 6-digit code we emailed you.' };
+  try {
+    const primaryType = mode === 'signup' ? 'signup' : 'email';
+    let { data, error } = await supabase.auth.verifyOtp({ email, token: code, type: primaryType });
+    // Some projects accept signup confirmations under the 'email' type — retry once.
+    if (error) {
+      const fallbackType = mode === 'signup' ? 'email' : 'signup';
+      const retry = await supabase.auth.verifyOtp({ email, token: code, type: fallbackType });
+      if (!retry.error) { data = retry.data; error = null; }
+    }
+    if (error) return { success: false, error: formatOtpError(error) };
+    const user = data?.user || data?.session?.user;
+    if (!user) return { success: false, error: 'Could not verify the code. Please try again.' };
+    const mapped = await persistAuthUser(user);
+    return { success: true, user: mapped };
+  } catch (e) { return { success: false, error: formatOtpError(e) }; }
+});
+
+// Resend the 6-digit code.
+ipcMain.handle('auth:resend-otp', async (_, { email, mode }) => {
+  await ensureSupabaseReady();
+  if (!supabase) return { success: false, error: 'Supabase not ready' };
+  if (!email) return { success: false, error: 'Missing email address.' };
+  try {
+    if (mode === 'signup') {
+      const { error } = await supabase.auth.resend({ type: 'signup', email });
+      if (error) {
+        // Fall back to an OTP email if the user is already confirmed.
+        const alt = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+        if (alt.error) return { success: false, error: formatOtpError(error) };
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+      if (error) return { success: false, error: formatOtpError(error) };
+    }
+    return { success: true };
+  } catch (e) { return { success: false, error: formatOtpError(e) }; }
 });
 
 ipcMain.handle('auth:sign-out', async () => {

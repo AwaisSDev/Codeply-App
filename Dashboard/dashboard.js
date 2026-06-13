@@ -11,6 +11,7 @@ let subStatus   = { allowed: true, reason: 'ok', plan: 'free' };
 let oauthPending = false;
 let oauthPollTimer = null;
 let oauthStartedAt = 0;
+let otpPending  = null;   // { email, mode } while the 6-digit code step is showing
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 function bindClick(id, handler) {
@@ -47,8 +48,8 @@ async function initDashboard() {
   await refreshSubscription();
   populateSettings();
   renderOverview();
-  // Load cloud history then render
-  loadCloudHistoryData().then(() => renderHistory());
+  // Load cloud history then render (overview + history both depend on it)
+  loadCloudHistoryData().then(() => { renderHistory(); renderOverview(); });
   renderSubscriptionPage();
   renderWatchCard();
 
@@ -75,11 +76,14 @@ async function liveRefresh() {
   try {
     usage     = await window.codeply.getUsage();
     watchData = await window.codeply.getWatch();
+    // Keep the signed-in account's cloud numbers fresh so the overview and badge
+    // reflect new requests without needing a manual page switch.
+    if (currentUser) await loadCloudHistoryData();
   } catch { return; }
   const activePage = document.querySelector('.page.active');
   if (activePage?.id === 'page-overview') renderOverview();
   renderWatchCard();
-  document.getElementById('historyBadge').textContent = usage.history?.length || 0;
+  document.getElementById('historyBadge').textContent = dashHistoryCount();
 }
 
 async function refreshSubscription() {
@@ -135,6 +139,10 @@ async function pollOAuthSession() {
       currentUser = session;
       updateUserUI();
       showAuthComplete(true, currentUser.name || currentUser.email);
+      // Load this account's cloud data so the overview/badge aren't stale.
+      await loadCloudHistoryData();
+      renderOverview();
+      renderHistory();
       setTimeout(async () => {
         hideAuthComplete();
         hideLogin();
@@ -152,13 +160,19 @@ async function pollOAuthSession() {
   }
 }
 
-function completeAuthSuccess(user) {
+async function completeAuthSuccess(user) {
   clearOAuthPending();
   clearLoginWaiting();
   clearLoginError();
+  otpPending = null;
   currentUser = user;
   updateUserUI();
   showAuthComplete(true, currentUser.name || currentUser.email);
+  // Load THIS account's cloud history/stats now so the dashboard never shows the
+  // previous account's numbers, then re-render the data views.
+  await loadCloudHistoryData();
+  renderOverview();
+  renderHistory();
   setTimeout(async () => {
     hideAuthComplete();
     hideLogin();
@@ -168,6 +182,8 @@ function completeAuthSuccess(user) {
     settings = await window.codeply.getSettings();
     populateSettings();
     renderSubscriptionPage();
+    renderOverview();
+    renderHistory();
   }, 2600);
 }
 
@@ -233,6 +249,7 @@ function formatAuthError(raw, context) {
 
 function getLoginErrorEl(context) {
   const ctx = context || activeLoginTab();
+  if (ctx === 'otp') return document.getElementById('loginErrorOtp');
   if (ctx === 'signup') return document.getElementById('loginErrorSignup');
   if (ctx === 'oauth') return document.getElementById('loginErrorSignin');
   return document.getElementById(ctx === 'signin' ? 'loginErrorSignin' : 'loginErrorSignup');
@@ -240,16 +257,20 @@ function getLoginErrorEl(context) {
 
 function setLoginError(msg, context) {
   clearLoginError();
-  const el = getLoginErrorEl(context);
+  const ctx = context || activeLoginTab();
+  const el = getLoginErrorEl(ctx);
   if (!el) return;
-  el.textContent = formatAuthError(msg, context || activeLoginTab());
+  // OTP errors are already humanized by the main process — don't re-mangle them.
+  el.textContent = ctx === 'otp'
+    ? (typeof msg === 'string' ? msg : (msg?.message || 'Could not verify the code.'))
+    : formatAuthError(msg, ctx);
   el.classList.add('show');
   clearLoginWaiting();
   requestAnimationFrame(() => el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 }
 
 function clearLoginError() {
-  ['loginErrorSignin', 'loginErrorSignup'].forEach(id => {
+  ['loginErrorSignin', 'loginErrorSignup', 'loginErrorOtp'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = '';
@@ -272,6 +293,42 @@ function showLogin() {
   lp.style.display = 'flex';
   lp.style.opacity = '0';
   requestAnimationFrame(() => { lp.style.transition = 'opacity .25s'; lp.style.opacity = '1'; });
+}
+
+// ─── 6-digit code (OTP) step ────────────────────────────────────────────────────
+function setLoginChromeVisible(visible) {
+  // Show/hide the OAuth buttons, divider, tabs and guest link while the OTP
+  // step is on screen so the card only shows the code input.
+  const disp = visible ? '' : 'none';
+  ['googleBtn', 'githubBtn', 'loginTabs'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = disp;
+  });
+  const divider = document.querySelector('#loginPage .divider');
+  if (divider) divider.style.display = disp;
+  const skip = document.getElementById('loginSkip');
+  if (skip && skip.parentElement) skip.parentElement.style.display = disp;
+}
+
+function showOtpForm(email, mode) {
+  otpPending = { email, mode: mode || 'login' };
+  setLoginChromeVisible(false);
+  document.getElementById('signinForm').style.display = 'none';
+  document.getElementById('signupForm').style.display = 'none';
+  document.getElementById('otpForm').style.display = '';
+  document.getElementById('otpEmailLabel').textContent = email || 'your inbox';
+  clearLoginError(); clearLoginWaiting();
+  const inp = document.getElementById('otpCode');
+  if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 60); }
+}
+
+function hideOtpForm() {
+  otpPending = null;
+  document.getElementById('otpForm').style.display = 'none';
+  setLoginChromeVisible(true);
+  const mode = activeLoginTab();
+  document.getElementById('signinForm').style.display = mode === 'signin' ? '' : 'none';
+  document.getElementById('signupForm').style.display = mode === 'signup' ? '' : 'none';
+  clearLoginError(); clearLoginWaiting();
 }
 
 // ─── Spinner → Tick auth completion animation ───────────────────────────────────
@@ -414,12 +471,48 @@ function renderTokenCapBar() {
   }
 }
 
+// ── Account-scoped data source ───────────────────────────────────────────────
+// When signed in, the dashboard reflects THIS account's cloud data only. Guests
+// fall back to the local (this-machine) usage file. This is what stops a new
+// account from seeing the previous account's tokens / history / badge count.
+function dashHistory() {
+  if (currentUser) {
+    return (_cloudHistory || []).map(h => ({
+      timestamp: h.created_at,
+      tokens:    h.tokens_total || 0,
+      snippet:   h.prompt_text || '–',
+      file:      h.file_path ? h.file_path.split(/[/\\]/).pop() : '–',
+      model:     h.model || '–',
+    }));
+  }
+  return usage.history || [];
+}
+function dashTotals() {
+  if (currentUser) {
+    return { tokens: _cloudStats.totalTokens || 0, requests: _cloudStats.totalRequests || 0 };
+  }
+  return { tokens: usage.totalTokens || 0, requests: usage.totalRequests || 0 };
+}
+function dashHistoryCount() {
+  return currentUser ? (_cloudHistory?.length || 0) : (usage.history?.length || 0);
+}
+
+// Wipe the in-memory cloud caches on sign-out so the next account never inherits
+// the previous account's history/stats, then refresh the data views.
+function resetAccountData() {
+  _cloudHistory = [];
+  _cloudStats   = { totalTokens: 0, totalRequests: 0, byModel: {} };
+  renderOverview();
+  renderHistory();
+}
+
 function renderOverview() {
-  document.getElementById('statTokens').textContent   = formatNum(usage.totalTokens);
-  document.getElementById('statRequests').textContent = usage.totalRequests;
-  const avg = usage.totalRequests > 0 ? Math.round(usage.totalTokens / usage.totalRequests) : 0;
+  const totals = dashTotals();
+  document.getElementById('statTokens').textContent   = formatNum(totals.tokens);
+  document.getElementById('statRequests').textContent = totals.requests;
+  const avg = totals.requests > 0 ? Math.round(totals.tokens / totals.requests) : 0;
   document.getElementById('statAvg').textContent = avg > 0 ? formatNum(avg) : '–';
-  document.getElementById('historyBadge').textContent = usage.history?.length || 0;
+  document.getElementById('historyBadge').textContent = dashHistoryCount();
   renderTokenCapBar();
   renderChart(); renderRecentActivity();
 }
@@ -430,7 +523,7 @@ function formatNum(n) {
 }
 function renderChart() {
   const chart   = document.getElementById('usageChart');
-  const history = usage.history || [];
+  const history = dashHistory();
 
   // Build last 7 calendar days (oldest → newest)
   const days = [];
@@ -517,7 +610,7 @@ function renderChart() {
 }
 function renderRecentActivity() {
   const container = document.getElementById('recentActivity');
-  const history   = (usage.history || []).slice(0, 5);
+  const history   = dashHistory().slice(0, 5);
   if (!history.length) {
     container.innerHTML = '<div class="empty-state"><span class="icon">◈</span>No requests yet. Use the overlay to get started.</div>';
     return;
@@ -814,6 +907,7 @@ function wireAllHandlers() {
   bindClick('paywallSignout', async () => {
     await codeply.auth.signOut();
     currentUser = null;
+    resetAccountData();
     updateUserUI();
     showLogin();
     document.getElementById('paywallOverlay').classList.remove('show');
@@ -848,6 +942,7 @@ function wireAllHandlers() {
     try {
       const res = await codeply.auth.signInEmail({ email, password });
       if (!res.success) { setLoginError(res.error || 'Incorrect email or password.', 'signin'); return; }
+      if (res.needsOtp) { showOtpForm(res.email || email, res.mode || 'login'); return; }
       completeAuthSuccess(res.user);
     } catch (err) {
       setLoginError(err.message || 'Failed to sign in.', 'signin');
@@ -870,11 +965,7 @@ function wireAllHandlers() {
     try {
       const res = await codeply.auth.signUpEmail({ email, password, name });
       if (!res.success) { setLoginError(res.error || 'Failed to create account.', 'signup'); return; }
-      if (res.needsConfirmation) {
-        clearLoginError();
-        setLoginWaiting(`Account created! Check ${email} for a confirmation link, then sign in.`);
-        return;
-      }
+      if (res.needsOtp) { showOtpForm(res.email || email, res.mode || 'signup'); return; }
       completeAuthSuccess(res.user);
     } catch (err) {
       setLoginError(err.message || 'Failed to create account.', 'signup');
@@ -882,6 +973,53 @@ function wireAllHandlers() {
       btn.disabled = false;
       btn.textContent = 'Create Account';
     }
+  });
+
+  // ── 6-digit code (OTP) handlers ──────────────────────────────────────────────
+  bindClick('verifyOtpBtn', async () => {
+    if (!otpPending) return;
+    clearLoginError();
+    const code = (document.getElementById('otpCode').value || '').replace(/\D/g, '');
+    if (code.length < 6) { setLoginError('Enter the 6-digit code from your email.', 'otp'); return; }
+    const btn = document.getElementById('verifyOtpBtn');
+    btn.disabled = true; btn.textContent = 'Verifying…';
+    try {
+      const res = await codeply.auth.verifyOtp({ email: otpPending.email, token: code, mode: otpPending.mode });
+      if (!res.success) { setLoginError(res.error || 'Incorrect code. Try again.', 'otp'); return; }
+      const user = res.user;
+      hideOtpForm();
+      completeAuthSuccess(user);
+    } catch (err) {
+      setLoginError(err.message || 'Could not verify the code.', 'otp');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Verify & continue';
+    }
+  });
+
+  bindClick('otpResendBtn', async () => {
+    if (!otpPending) return;
+    clearLoginError();
+    const btn = document.getElementById('otpResendBtn');
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await codeply.auth.resendOtp({ email: otpPending.email, mode: otpPending.mode });
+      if (!res.success) setLoginError(res.error || 'Could not resend the code.', 'otp');
+      else setLoginWaiting(`A new code is on its way to ${otpPending.email}.`);
+    } catch (err) {
+      setLoginError(err.message || 'Could not resend the code.', 'otp');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  });
+
+  bindClick('otpBackBtn', () => hideOtpForm());
+
+  document.getElementById('otpCode')?.addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+  document.getElementById('otpCode')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('verifyOtpBtn')?.click();
   });
 
   bindClick('loginSkip', () => {
@@ -897,6 +1035,7 @@ function wireAllHandlers() {
     settings.apiKey = '';
     const apiKeyEl = document.getElementById('s-apiKey');
     if (apiKeyEl) apiKeyEl.value = '';
+    resetAccountData();
     updateUserUI();
     renderSubscriptionPage();
     showLogin();

@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('codeply', {
     signInGitHub()         { return ipcRenderer.invoke('auth:sign-in-github'); },
     signInEmail(creds)     { return ipcRenderer.invoke('auth:sign-in-email', creds); },
     signUpEmail(creds)     { return ipcRenderer.invoke('auth:sign-up-email', creds); },
+    verifyOtp(payload)     { return ipcRenderer.invoke('auth:verify-otp', payload); },
+    resendOtp(payload)     { return ipcRenderer.invoke('auth:resend-otp', payload); },
     signOut()              { return ipcRenderer.invoke('auth:sign-out'); },
     getSession()           { return ipcRenderer.invoke('auth:get-session'); },
     onCallback(cb)         { ipcRenderer.on('auth:callback', (_, data) => cb(data)); },
