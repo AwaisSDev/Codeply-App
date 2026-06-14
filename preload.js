@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('codeply', {
     onProgress(cb)   { ipcRenderer.on('update:progress',   (_, d) => cb(d)); },
     onDownloaded(cb) { ipcRenderer.on('update:downloaded', (_, d) => cb(d)); },
     onError(cb)      { ipcRenderer.on('update:error',      (_, d) => cb(d)); },
+    onUiUpdated(cb)  { ipcRenderer.on('ui:updated',        (_, d) => cb(d)); },
   },
 
   // ── AI events (model fallback notifications) ────────────────────────────────

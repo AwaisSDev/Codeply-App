@@ -147,6 +147,8 @@ function initUpdater() {
   });
   cp.updater.onDownloaded((d) => setStage('downloaded', d));
   cp.updater.onError((d) => setStage('error', d));
+  // UI hot-update applied live (no restart) — just a small confirmation toast.
+  cp.updater.onUiUpdated?.((d) => showToast(`Updated to the latest version${d?.version ? ' (UI v' + d.version + ')' : ''}`, 'success'));
 
   // Buttons
   bindClick('upInstallBtn', startDownload);

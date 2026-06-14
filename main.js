@@ -472,6 +472,120 @@ let tray;
 const configPath = path.join(app.getPath('userData'), 'codeply-config.json');
 const usagePath = path.join(app.getPath('userData'), 'codeply-usage.json');
 
+// ─── UI Hot-Update (OTA) ────────────────────────────────────────────────────────
+// Small UI-only fixes (HTML/CSS/JS in Dashboard/ + Renderer/) can ship WITHOUT the
+// full installer + restart. The app fetches a tiny signed-by-hash bundle, writes it
+// to userData, and live-reloads the windows. Native changes (main.js, preload.js,
+// deps) still require the full electron-updater flow — those can't be hot-swapped.
+const UI_OTA_REPO   = (savedSettingsRepo()); // { owner, repo, branch }
+const UI_MANIFEST_URL = `https://raw.githubusercontent.com/${UI_OTA_REPO.owner}/${UI_OTA_REPO.repo}/${UI_OTA_REPO.branch}/ui-manifest.json`;
+
+let UI_ROOT = __dirname;          // where windows load their HTML/CSS/JS from
+let currentUiVersion = 0;         // active UI version (bundled or OTA, whichever is live)
+
+function savedSettingsRepo() {
+  // Derived from package.json build.publish so the URL always matches the repo.
+  try {
+    const pkg = require('./package.json');
+    const pub = pkg.build && pkg.build.publish;
+    if (pub && pub.owner && pub.repo) return { owner: pub.owner, repo: pub.repo, branch: 'main' };
+  } catch {}
+  return { owner: 'AwaissDev', repo: 'Codeply-App', branch: 'main' };
+}
+
+function getBundledUiVersion() {
+  try { return Number(require('./ui-version.json').uiVersion) || 0; } catch { return 0; }
+}
+
+function cmpSemver(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) { if ((pa[i]||0) !== (pb[i]||0)) return (pa[i]||0) - (pb[i]||0); }
+  return 0;
+}
+
+// Decide where to load UI from on boot: a valid newer OTA bundle, else the bundled copy.
+function resolveUiRoot() {
+  const bundledV = getBundledUiVersion();
+  currentUiVersion = bundledV;
+  try {
+    const statePath = path.join(app.getPath('userData'), 'ui', 'state.json');
+    if (!fs.existsSync(statePath)) return __dirname;
+    const st = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    // A fresh install/upgrade ships its own UI — it supersedes any older OTA bundle.
+    if (!st.dir || Number(st.uiVersion) <= bundledV) return __dirname;
+    // Only trust the OTA dir if its entry files are actually present.
+    if (fs.existsSync(path.join(st.dir, 'Dashboard', 'index.html')) &&
+        fs.existsSync(path.join(st.dir, 'Renderer', 'index.html'))) {
+      currentUiVersion = Number(st.uiVersion);
+      return st.dir;
+    }
+  } catch (e) { console.warn('[ui-ota] resolve failed:', e.message); }
+  return __dirname;
+}
+
+// Write a downloaded bundle to a fresh per-version dir and mark it active.
+function applyUiBundle(uiVersion, bundle) {
+  const otaBase = path.join(app.getPath('userData'), 'ui');
+  const dir = path.join(otaBase, String(uiVersion));
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [rel, b64] of Object.entries(bundle.files || {})) {
+    const dest = path.join(dir, rel);
+    // Guard against path traversal in file names.
+    if (!dest.startsWith(dir)) continue;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, Buffer.from(b64, 'base64'));
+  }
+  // Sanity-check the entry files exist before we switch to it.
+  if (!fs.existsSync(path.join(dir, 'Dashboard', 'index.html')) ||
+      !fs.existsSync(path.join(dir, 'Renderer', 'index.html'))) {
+    throw new Error('bundle missing entry files');
+  }
+  fs.writeFileSync(path.join(otaBase, 'state.json'), JSON.stringify({ uiVersion, dir }));
+  return dir;
+}
+
+function reloadUiWindows() {
+  if (dashboardWindow && !dashboardWindow.isDestroyed())
+    dashboardWindow.loadFile(path.join(UI_ROOT, 'Dashboard', 'index.html'));
+  if (popupWindow && !popupWindow.isDestroyed())
+    popupWindow.loadFile(path.join(UI_ROOT, 'Renderer', 'index.html'));
+}
+
+async function checkUiUpdate() {
+  try {
+    const bust = `?t=${Date.now()}`;
+    const res = await fetch(UI_MANIFEST_URL + bust, { cache: 'no-store' });
+    if (!res.ok) return;
+    const man = await res.json();
+    const newV = Number(man.uiVersion) || 0;
+    if (newV <= currentUiVersion) return;                       // nothing newer
+    // A UI bundle may rely on native code added in a specific app version.
+    if (man.minAppVersion && cmpSemver(app.getVersion(), man.minAppVersion) < 0) {
+      console.log('[ui-ota] skipping — needs app >=', man.minAppVersion);
+      return;
+    }
+    const bres = await fetch(man.bundleUrl + bust, { cache: 'no-store' });
+    if (!bres.ok) return;
+    const buf = Buffer.from(await bres.arrayBuffer());
+    // Integrity gate: the bundle's hash must match the manifest.
+    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+    if (man.sha256 && hash !== man.sha256) { console.warn('[ui-ota] hash mismatch — discarding'); return; }
+    const bundle = JSON.parse(buf.toString('utf8'));
+    const dir = applyUiBundle(newV, bundle);
+    UI_ROOT = dir;
+    currentUiVersion = newV;
+    reloadUiWindows();
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.once('did-finish-load', () => {
+        setTimeout(() => { try { dashboardWindow.webContents.send('ui:updated', { version: newV }); } catch {} }, 250);
+      });
+    }
+    console.log('[ui-ota] applied UI version', newV);
+  } catch (e) { console.warn('[ui-ota] check failed:', e.message); }
+}
+
 // ─── Config & Usage Persistence ───────────────────────────────────────────────
 
 // ── API-key encryption using Electron safeStorage (OS keychain/DPAPI) ──────────
@@ -600,7 +714,7 @@ function createPopupWindow() {
     }, 400);
   });
 
-  popupWindow.loadFile(path.join(__dirname, 'Renderer', 'index.html'));
+  popupWindow.loadFile(path.join(UI_ROOT, 'Renderer', 'index.html'));
   popupWindow.hide();
 }
 
@@ -623,7 +737,7 @@ function createDashboardWindow() {
       nodeIntegration: false,
     },
   });
-  dashboardWindow.loadFile(path.join(__dirname, 'Dashboard', 'index.html'));
+  dashboardWindow.loadFile(path.join(UI_ROOT, 'Dashboard', 'index.html'));
   // Close button hides instead of quitting, so it keeps running in the background.
   dashboardWindow.on('close', (e) => {
     if (!app.isQuiting) { e.preventDefault(); dashboardWindow.hide(); }
@@ -2004,6 +2118,7 @@ app.whenReady().then(async () => {
   if (launchUrl) pendingAuthUrl = launchUrl;
 
   await ensureSupabaseReady();    // boot Supabase first so IPC handlers have a client
+  UI_ROOT = resolveUiRoot();      // load UI from a valid OTA bundle if one exists
   createPopupWindow();
   createDashboardWindow();
   createTray();
@@ -2051,6 +2166,14 @@ app.whenReady().then(async () => {
 
     // Silent background check on boot — only the in-app page reacts.
     autoUpdater.checkForUpdates().catch((e) => console.warn('[updater] check failed:', e.message));
+  }
+
+  // ── UI hot-update (OTA) ────────────────────────────────────────────────────
+  // Instant UI-only fixes, no restart screen. Check shortly after boot, then
+  // poll every 15 min so a pushed fix lands while the app stays open.
+  if (app.isPackaged) {
+    setTimeout(checkUiUpdate, 8000);
+    setInterval(checkUiUpdate, 15 * 60 * 1000);
   }
 
   const hotkey = savedSettings.hotkey || 'Alt+C';

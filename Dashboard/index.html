@@ -408,12 +408,13 @@
     .mr-provider-sel:focus, .mr-model-inp:focus, .mr-key-inp:focus {
       outline: none; border-color: var(--accent);
     }
-    .mr-toggle, .mr-delete {
+    .mr-toggle, .mr-delete, .mr-default {
       width: 28px; height: 28px; border-radius: 7px;
-      border: none; cursor: pointer; font-size: 13px;
+      border: none; outline: none; cursor: pointer; font-size: 13px;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
       transition: background .15s;
     }
+    .mr-toggle:focus, .mr-delete:focus, .mr-default:focus { outline: none; }
     .mr-toggle { background: #dcfce7; color: #16a34a; }
     .mr-toggle.off { background: #f3f4f6; color: #9ca3af; }
     .mr-delete { background: #fee2e2; color: #dc2626; }
