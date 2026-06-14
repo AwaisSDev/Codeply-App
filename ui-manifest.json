@@ -1,6 +1,6 @@
 {
-  "uiVersion": 1,
+  "uiVersion": 2,
   "minAppVersion": "1.1.2",
   "bundleUrl": "https://raw.githubusercontent.com/AwaissDev/Codeply-App/main/ui-bundle.json",
-  "sha256": "28ee793ed9336deadf76926bfbe55b8135d36659eaf19b7beaf28a78b8e7334e"
+  "sha256": "aaa00e250303db8dea7d632c8a2409e55746fac08fd7a163e79b7de8e7beb435"
 }
