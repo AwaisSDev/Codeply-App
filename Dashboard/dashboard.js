@@ -52,6 +52,7 @@ async function initDashboard() {
   loadCloudHistoryData().then(() => { renderHistory(); renderOverview(); });
   renderSubscriptionPage();
   renderWatchCard();
+  initUpdater();
 
   refreshTimer = setInterval(liveRefresh, 5000);
   window.addEventListener('focus', () => { if (oauthPending) pollOAuthSession(); });
@@ -69,6 +70,93 @@ if (document.readyState === 'loading') {
   });
 } else {
   initDashboard().catch(err => console.error('[Dashboard] init failed:', err));
+}
+
+// ─── In-app updater (full-page update flow, no native notifications) ────────────
+function initUpdater() {
+  const cp = window.codeply;
+  if (!cp || !cp.updater) return;
+
+  const $ = (id) => document.getElementById(id);
+  const overlay = $('updateOverlay');
+  if (!overlay) return;
+
+  const fmtBytes = (b) => {
+    if (!b) return '0 MB';
+    const mb = b / (1024 * 1024);
+    return mb >= 1 ? mb.toFixed(1) + ' MB' : (b / 1024).toFixed(0) + ' KB';
+  };
+
+  function setStage(stage, data = {}) {
+    const title   = $('upTitle'),       sub     = $('upSub'),      ver     = $('upVersion');
+    const prog    = $('upProgressWrap'), install = $('upInstallBtn');
+    const restart = $('upRestartBtn'),   err     = $('upError'),    retry   = $('upRetryBtn');
+
+    // Hide everything, then reveal what this stage needs.
+    prog.style.display = 'none';
+    install.style.display = 'none';
+    restart.style.display = 'none';
+    retry.style.display = 'none';
+    err.style.display = 'none';
+
+    if (stage === 'available') {
+      title.textContent = 'Update Required';
+      sub.textContent = 'A new version of Codeply is available. Install it to continue with the latest fixes and features.';
+      if (data.version) { ver.textContent = 'Version ' + data.version; ver.style.display = 'block'; }
+      install.style.display = 'flex';
+    } else if (stage === 'downloading') {
+      title.textContent = 'Installing Update';
+      sub.textContent = 'Downloading the latest version. Please keep Codeply open until it finishes.';
+      prog.style.display = 'block';
+    } else if (stage === 'downloaded') {
+      title.textContent = 'Update Ready';
+      sub.textContent = 'The update has been installed. Restart Codeply to finish and start using the new version.';
+      restart.style.display = 'flex';
+    } else if (stage === 'error') {
+      title.textContent = 'Update Failed';
+      sub.textContent = 'Something went wrong while updating. You can try again.';
+      err.textContent = data.message || 'Unknown error';
+      err.style.display = 'block';
+      retry.style.display = 'block';
+    }
+    overlay.style.display = 'flex';
+  }
+
+  async function startDownload() {
+    setStage('downloading');
+    $('upProgressBar').style.width = '0%';
+    $('upProgressPct').textContent = '0%';
+    $('upProgressMeta').textContent = '';
+    try {
+      const r = await cp.updater.download();
+      if (r && r.ok === false && r.reason !== 'dev') setStage('error', { message: r.error || 'Download failed' });
+    } catch (e) {
+      setStage('error', { message: e.message });
+    }
+  }
+
+  // Main → renderer update events
+  cp.updater.onAvailable((d) => setStage('available', d));
+  cp.updater.onProgress((p) => {
+    if (overlay.style.display !== 'flex' || $('upProgressWrap').style.display === 'none') setStage('downloading');
+    const pct = Math.max(0, Math.min(100, p.percent || 0));
+    $('upProgressBar').style.width = pct + '%';
+    $('upProgressPct').textContent = pct + '%';
+    const speed = p.bytesPerSecond ? ' · ' + fmtBytes(p.bytesPerSecond) + '/s' : '';
+    $('upProgressMeta').textContent = fmtBytes(p.transferred) + ' / ' + fmtBytes(p.total) + speed;
+  });
+  cp.updater.onDownloaded((d) => setStage('downloaded', d));
+  cp.updater.onError((d) => setStage('error', d));
+
+  // Buttons
+  bindClick('upInstallBtn', startDownload);
+  bindClick('upRetryBtn', startDownload);
+  bindClick('upRestartBtn', async () => {
+    const btn = $('upRestartBtn');
+    btn.textContent = 'Restarting…';
+    btn.disabled = true;
+    try { await cp.updater.install(); } catch (e) { setStage('error', { message: e.message }); }
+  });
 }
 
 // ─── Live refresh ──────────────────────────────────────────────────────────────

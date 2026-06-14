@@ -1036,6 +1036,28 @@ ipcMain.handle('dashboard:maximize', () => {
 ipcMain.handle('dashboard:close', () => { if (dashboardWindow) dashboardWindow.hide(); });
 ipcMain.handle('app:quit', () => { app.isQuiting = true; app.quit(); });
 ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
+
+// ── Auto-updater controls (driven by the in-app update page) ──────────────────
+ipcMain.handle('update:check', async () => {
+  if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  try { await autoUpdater.checkForUpdates(); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('update:download', async () => {
+  if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  try { await autoUpdater.downloadUpdate(); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('update:install', () => {
+  // Mark as quitting so the dashboard's close handler doesn't swallow the quit,
+  // then quit → run the installer silently → relaunch the new version.
+  app.isQuiting = true;
+  setImmediate(() => {
+    try { autoUpdater.quitAndInstall(true, true); }
+    catch (e) { console.warn('[updater] quitAndInstall failed:', e.message); }
+  });
+  return { ok: true };
+});
 ipcMain.handle('shell:open-external', async (_, url) => {
   console.log('[codeply] open-external called:', url);
   try {
@@ -1930,10 +1952,43 @@ ipcMain.handle('file:read', (_, filePath) => {
   } catch (e) { return null; }
 });
 
+// ─── Startup-entry cleanup ──────────────────────────────────────────────────────
+// A previous `electron .` dev run registered electron.exe itself in the Windows
+// Run key (shows as "Electron" in Startup apps). Scan the Run key and delete only
+// entries that point at a dev electron.exe — never the real Codeply entry.
+function cleanupStrayStartupEntries() {
+  if (process.platform !== 'win32') return;
+  const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  exec(`reg query "${RUN_KEY}"`, (err, stdout) => {
+    if (err || !stdout) return;
+    stdout.split(/\r?\n/).forEach((line) => {
+      // Value lines look like:  "    Name    REG_SZ    C:\path\to\exe ..."
+      const m = line.match(/^\s*(\S.*?)\s+REG_\w+\s+(.+)$/);
+      if (!m) return;
+      const name = m[1].trim();
+      const data = m[2].toLowerCase();
+      const isDevElectron =
+        data.includes('node_modules\\electron') ||
+        data.includes('electron\\dist\\electron.exe');
+      // Guard: never touch the legitimate Codeply startup entry.
+      if (isDevElectron && !data.includes('codeply')) {
+        exec(`reg delete "${RUN_KEY}" /v "${name}" /f`, () => {});
+      }
+    });
+  });
+}
+
 // ─── App Boot ──────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
-  app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+  // Launch-at-login: ONLY register the real packaged Codeply build.
+  // Running `electron .` in dev would otherwise register electron.exe itself,
+  // which is why a stray "Electron" entry showed up in Startup apps.
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+  }
+  // Remove any leftover dev "Electron" startup entry from earlier runs.
+  cleanupStrayStartupEntries();
   app.on('before-quit', () => { app.isQuiting = true; });
 
   const launchUrl = getDeepLinkFromArgv();
@@ -1948,18 +2003,45 @@ app.whenReady().then(async () => {
   startClipboardWatch();   // code-only clipboard sync every 10s
   startFolderWatch();      // auto-detect the file you're editing
 
-  // ── Auto-updater ──────────────────────────────────────────────────────────
-  // Only runs in packaged builds (not during npm start)
+  // ── Auto-updater (fully in-app — no native OS notifications) ───────────────
+  // Only runs in packaged builds (not during `npm start`). We drive the whole
+  // flow from the in-app update page in the dashboard: check → download (with a
+  // progress bar) → restart to install. checkForUpdatesAndNotify() is NOT used
+  // because it pops a Windows notification that errors when the app is open.
   if (app.isPackaged) {
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.checkForUpdatesAndNotify();
+    autoUpdater.autoDownload = false;          // download is triggered from the UI
+    autoUpdater.autoInstallOnAppQuit = false;  // install/restart is user-driven
+    autoUpdater.allowDowngrade = false;
 
-    autoUpdater.on('update-downloaded', () => {
+    const sendToDash = (channel, payload) => {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.webContents.send('update:ready');
+        try { dashboardWindow.webContents.send(channel, payload); } catch {}
       }
+    };
+
+    autoUpdater.on('update-available', (info) => {
+      sendToDash('update:available', { version: info?.version || '' });
     });
+    autoUpdater.on('update-not-available', () => {
+      sendToDash('update:none', {});
+    });
+    autoUpdater.on('download-progress', (p) => {
+      sendToDash('update:progress', {
+        percent: Math.round(p?.percent || 0),
+        transferred: p?.transferred || 0,
+        total: p?.total || 0,
+        bytesPerSecond: p?.bytesPerSecond || 0,
+      });
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      sendToDash('update:downloaded', { version: info?.version || '' });
+    });
+    autoUpdater.on('error', (err) => {
+      sendToDash('update:error', { message: (err && err.message) || String(err) });
+    });
+
+    // Silent background check on boot — only the in-app page reacts.
+    autoUpdater.checkForUpdates().catch((e) => console.warn('[updater] check failed:', e.message));
   }
 
   const hotkey = savedSettings.hotkey || 'Alt+C';

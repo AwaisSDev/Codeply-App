@@ -73,6 +73,18 @@ contextBridge.exposeInMainWorld('codeply', {
     restart() { return ipcRenderer.invoke('app:restart'); },
   },
 
+  // ── Auto-updater (in-app update page) ───────────────────────────────────────
+  updater: {
+    check()    { return ipcRenderer.invoke('update:check'); },
+    download() { return ipcRenderer.invoke('update:download'); },
+    install()  { return ipcRenderer.invoke('update:install'); },
+    onAvailable(cb)  { ipcRenderer.on('update:available',  (_, d) => cb(d)); },
+    onNone(cb)       { ipcRenderer.on('update:none',       (_, d) => cb(d)); },
+    onProgress(cb)   { ipcRenderer.on('update:progress',   (_, d) => cb(d)); },
+    onDownloaded(cb) { ipcRenderer.on('update:downloaded', (_, d) => cb(d)); },
+    onError(cb)      { ipcRenderer.on('update:error',      (_, d) => cb(d)); },
+  },
+
   // ── AI events (model fallback notifications) ────────────────────────────────
   onModelFallback(cb) { ipcRenderer.on('ai:model-fallback', (_, d) => cb(d)); },
 });
