@@ -831,7 +831,7 @@ function renderSubscriptionPage() {
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
 const DASH_PROVIDER_MODELS = {
-  openrouter: ['poolside/laguna-xs.2:free','openai/gpt-4o-mini','openai/gpt-4o','anthropic/claude-3.5-sonnet','anthropic/claude-3.5-haiku','google/gemini-flash-1.5','deepseek/deepseek-r1','x-ai/grok-2-1212','meta-llama/llama-3.1-70b-instruct','mistralai/mistral-large','qwen/qwen-2.5-72b-instruct'],
+  openrouter: ['openai/gpt-4o-mini','openai/gpt-4o','anthropic/claude-3.5-sonnet','anthropic/claude-3.5-haiku','google/gemini-flash-1.5','deepseek/deepseek-r1','x-ai/grok-2-1212','meta-llama/llama-3.1-70b-instruct','mistralai/mistral-large','qwen/qwen-2.5-72b-instruct'],
   openai:     ['gpt-4o-mini','gpt-4o','gpt-4-turbo','gpt-4','gpt-3.5-turbo','o1-mini','o1-preview','o3-mini','o4-mini','gpt-4.1-mini'],
   anthropic:  ['claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','claude-3-5-sonnet-20240620','claude-3-opus-20240229','claude-3-haiku-20240307','claude-3-sonnet-20240229','claude-opus-4-5','claude-sonnet-4-5','claude-haiku-4-5-20251001','claude-2.1'],
   google:     ['gemini-2.0-flash','gemini-2.0-flash-lite','gemini-2.0-pro-exp','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-1.5-flash-8b','gemini-exp-1206','gemini-1.0-pro','gemma-3-27b-it','gemma-3-12b-it'],
@@ -848,8 +848,7 @@ function dashPopulateModelSel(provider, currentModel) {
   if (!sel) return;
   const list = DASH_PROVIDER_MODELS[provider] || [];
   sel.innerHTML = list.map(m => {
-    let label = m.includes('/') ? m.split('/').pop() : m;
-    if (m === 'poolside/laguna-xs.2:free') label = 'laguna-xs.2  ★ Free · Recommended';
+    const label = m.includes('/') ? m.split('/').pop() : m;
     return `<option value="${m}">${label}</option>`;
   }).join('') + `<option value="__custom__">Custom…</option>`;
   // Try to match saved model
@@ -907,6 +906,7 @@ function mrMakeRow(entry, idx) {
            type="text" placeholder="${placeholder}" value="${escHtml(entry.modelId || '')}">
     <input class="mr-key-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem;width:148px;flex-shrink:0"
            type="password" placeholder="API Key" autocomplete="off">
+    <button class="mr-default${entry.isDefault ? ' on' : ''}" title="${entry.isDefault ? 'Default fallback — used if other models fail' : 'Set as default fallback'}">★</button>
     <button class="mr-toggle${enabled ? '' : ' off'}" title="${enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">${enabled ? '✓' : '○'}</button>
     <button class="mr-delete" title="Remove model">✕</button>
   `;
@@ -927,12 +927,28 @@ function mrMakeRow(entry, idx) {
     btn.title = on ? 'Disabled — click to enable' : 'Enabled — click to disable';
   });
 
+  // Default model = radio behavior: only one row can be the default fallback.
+  div.querySelector('.mr-default').addEventListener('click', e => {
+    const btn = e.currentTarget;
+    const turningOn = !btn.classList.contains('on');
+    document.querySelectorAll('#mrList .mr-default.on').forEach(b => {
+      b.classList.remove('on');
+      b.title = 'Set as default fallback';
+    });
+    if (turningOn) {
+      btn.classList.add('on');
+      btn.title = 'Default fallback — used if other models fail';
+    }
+    mrUpdateFallbackNote();
+  });
+
   div.querySelector('.mr-delete').addEventListener('click', () => {
     div.remove();
     if (!document.querySelector('#mrList .mr-item')) {
       document.getElementById('mrList').innerHTML =
         '<div class="mr-empty">No models yet. Click <strong>+ Add Model</strong> to get started.</div>';
     }
+    mrUpdateFallbackNote();
   });
 
   return div;
@@ -947,17 +963,32 @@ function renderModelRanking(models = []) {
     return;
   }
   models.forEach((m, i) => list.appendChild(mrMakeRow(m, i)));
+  mrUpdateFallbackNote();
+}
+
+// Show which model is the current default fallback (or prompt to pick one).
+function mrUpdateFallbackNote() {
+  const note = document.getElementById('mrFallbackNote');
+  if (!note) return;
+  const defRow = document.querySelector('#mrList .mr-default.on');
+  const model = defRow?.closest('.mr-item')?.querySelector('.mr-model-inp')?.value?.trim();
+  if (model) {
+    note.innerHTML = `Default fallback: <strong style="color:var(--text);margin:0 3px">${escHtml(model)}</strong> — used if your other models fail.`;
+  } else {
+    note.innerHTML = `Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback — used if your other models fail.`;
+  }
 }
 
 function getModelRankingData() {
   const list = document.getElementById('mrList');
   if (!list) return [];
   return [...list.querySelectorAll('.mr-item')].map(item => ({
-    id:       item.dataset.id,
-    provider: item.querySelector('.mr-provider-sel')?.value || 'openrouter',
-    modelId:  item.querySelector('.mr-model-inp')?.value?.trim() || '',
-    apiKey:   item.querySelector('.mr-key-inp')?.value || '',
-    enabled:  !item.querySelector('.mr-toggle')?.classList.contains('off'),
+    id:        item.dataset.id,
+    provider:  item.querySelector('.mr-provider-sel')?.value || 'openrouter',
+    modelId:   item.querySelector('.mr-model-inp')?.value?.trim() || '',
+    apiKey:    item.querySelector('.mr-key-inp')?.value || '',
+    enabled:   !item.querySelector('.mr-toggle')?.classList.contains('off'),
+    isDefault: item.querySelector('.mr-default')?.classList.contains('on') || false,
   })).filter(m => m.modelId);
 }
 

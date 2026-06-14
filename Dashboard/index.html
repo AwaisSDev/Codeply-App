@@ -418,6 +418,9 @@
     .mr-toggle.off { background: #f3f4f6; color: #9ca3af; }
     .mr-delete { background: #fee2e2; color: #dc2626; }
     .mr-delete:hover { background: #fecaca; }
+    .mr-default { background: #f3f4f6; color: #c2c7d0; font-size: 14px; }
+    .mr-default:hover { background: #fff3d4; color: #E38A00; }
+    .mr-default.on { background: #fff3d4; color: #E38A00; box-shadow: 0 0 0 1.5px rgba(227,138,0,.35) inset; }
     .mr-fallback {
       padding: 8px 12px; background: #f8f9fb; border-radius: 8px;
       font-size: 0.74rem; color: var(--text2); margin-bottom: 16px;
@@ -1390,7 +1393,7 @@
 
             <div class="mr-fallback">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.07-8.77"/></svg>
-              Fallback if all fail: <strong style="color:var(--text);margin:0 3px">poolside/laguna-xs.2:free</strong> via OpenRouter
+              <span id="mrFallbackNote">Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback — used if your other models fail.</span>
             </div>
 
             <div class="field">

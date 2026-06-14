@@ -312,6 +312,15 @@ async function callAI(selectedModelId, messages, expectJson = true) {
     ordered = allModels;
   }
 
+  // User-designated default model = guaranteed last-resort fallback. If anything
+  // earlier in the chain fails, requests cascade down to it. (Skip if it's the
+  // explicitly selected model — then it's already first and tried once is enough.)
+  const defaultModel = allModels.find(m => m.isDefault);
+  if (defaultModel && defaultModel.id !== selectedModelId) {
+    ordered = ordered.filter(m => m.id !== defaultModel.id);
+    ordered.push(defaultModel);
+  }
+
   const tried = [];
   for (const model of ordered) {
     try {
