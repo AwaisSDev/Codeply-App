@@ -129,13 +129,13 @@ async function logUsageToCloud({ model, tokensIn, tokensOut, tokensTotal, prompt
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     await supabase.from('usage_history').insert({
-      user_id:     session.user.id,
-      model:       model || '',
-      tokens_in:   tokensIn   || 0,
-      tokens_out:  tokensOut  || 0,
+      user_id: session.user.id,
+      model: model || '',
+      tokens_in: tokensIn || 0,
+      tokens_out: tokensOut || 0,
       tokens_total: tokensTotal || 0,
       prompt_text: (promptText || '').slice(0, 300),
-      file_path:   filePath || '',
+      file_path: filePath || '',
     });
   } catch (e) { console.warn('[Cloud] history log failed:', e.message); }
 }
@@ -165,9 +165,9 @@ async function fetchCloudSettings(userId) {
 
     // Always overwrite with cloud values — never fall back to leftover local
     // settings from a previous account (that's what leaks keys across accounts).
-    savedSettings.apiKey   = data.api_key || '';
+    savedSettings.apiKey = data.api_key || '';
     savedSettings.provider = data.provider || 'openrouter';
-    savedSettings.model    = data.model    || '';
+    savedSettings.model = data.model || '';
     savedSettings.tokenCap = (data.token_cap !== undefined && data.token_cap !== null) ? data.token_cap : 0;
     // Only overwrite modelRanking if cloud explicitly returned it.
     // If the field is absent (edge function not redeployed yet), keep local copy.
@@ -198,11 +198,11 @@ async function pushCloudSettings(userId, data) {
         'apikey': SUPABASE_ANON_KEY,
       },
       body: JSON.stringify({
-        action:        'save',
-        api_key:       data.apiKey       ?? savedSettings.apiKey       ?? '',
-        provider:      data.provider     ?? savedSettings.provider     ?? 'openrouter',
-        model:         data.model        ?? savedSettings.model        ?? '',
-        token_cap:     data.tokenCap     ?? savedSettings.tokenCap     ?? 0,
+        action: 'save',
+        api_key: data.apiKey ?? savedSettings.apiKey ?? '',
+        provider: data.provider ?? savedSettings.provider ?? 'openrouter',
+        model: data.model ?? savedSettings.model ?? '',
+        token_cap: data.tokenCap ?? savedSettings.tokenCap ?? 0,
         model_ranking: data.modelRanking ?? savedSettings.modelRanking ?? [],
       }),
     });
@@ -225,17 +225,18 @@ async function pushCloudSettings(userId, data) {
 /** Base URL for each provider. */
 function providerUrl(provider, customUrl) {
   switch (provider) {
-    case 'openai':    return 'https://api.openai.com/v1/chat/completions';
-    case 'groq':      return 'https://api.groq.com/openai/v1/chat/completions';
+    case 'openai': return 'https://api.openai.com/v1/chat/completions';
+    case 'groq': return 'https://api.groq.com/openai/v1/chat/completions';
     case 'xai':
-    case 'grok':      return 'https://api.x.ai/v1/chat/completions';
-    case 'deepseek':  return 'https://api.deepseek.com/v1/chat/completions';
-    case 'kimi':      return 'https://api.moonshot.cn/v1/chat/completions';
-    case 'google':    return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    case 'grok': return 'https://api.x.ai/v1/chat/completions';
+    case 'deepseek': return 'https://api.deepseek.com/v1/chat/completions';
+    case 'kimi': return 'https://api.moonshot.cn/v1/chat/completions';
+    case 'google': return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     case 'anthropic': return 'https://api.anthropic.com/v1/messages';
-    case 'ollama':    return customUrl || 'http://localhost:11434/v1/chat/completions';
-    case 'custom':    return customUrl || 'https://openrouter.ai/api/v1/chat/completions';
-    default:          return 'https://openrouter.ai/api/v1/chat/completions';
+    case 'ollama': return customUrl || 'http://localhost:11434/v1/chat/completions';
+    case 'ollama-cloud': return 'https://ollama.com/v1/chat/completions';
+    case 'custom': return customUrl || 'https://openrouter.ai/api/v1/chat/completions';
+    default: return 'https://openrouter.ai/api/v1/chat/completions';
   }
 }
 
@@ -272,8 +273,9 @@ async function callSingleModel(entry, messages, expectJson) {
 
   // OpenAI-compatible (OpenRouter, OpenAI, Groq, xAI, DeepSeek, Kimi, Google, Ollama)
   const headers = { 'Content-Type': 'application/json' };
-  // Ollama runs locally and needs no auth; everything else uses a bearer key.
-  if (entry.provider !== 'ollama') {
+  // Local Ollama needs no auth (keyless); Ollama Cloud and everything else use a
+  // bearer key. So send the header whenever there's a key, or for non-Ollama.
+  if (entry.provider !== 'ollama' || entry.apiKey) {
     headers['Authorization'] = `Bearer ${entry.apiKey || ''}`;
   }
   if ((entry.provider || 'openrouter') === 'openrouter') {
@@ -302,7 +304,7 @@ async function callSingleModel(entry, messages, expectJson) {
  */
 async function callAI(selectedModelId, messages, expectJson = true) {
   const allModels = (savedSettings.modelRanking || [])
-    // Ollama is local and keyless; every other provider needs an API key.
+    // Ollama (local) is keyless; every other provider needs an API key.
     .filter(m => m.enabled !== false && m.modelId && (m.apiKey || m.provider === 'ollama'));
 
   // Put selected model first, then the rest in order
@@ -480,7 +482,7 @@ const usagePath = path.join(app.getPath('userData'), 'codeply-usage.json');
 // full installer + restart. The app fetches a tiny signed-by-hash bundle, writes it
 // to userData, and live-reloads the windows. Native changes (main.js, preload.js,
 // deps) still require the full electron-updater flow — those can't be hot-swapped.
-const UI_OTA_REPO   = (savedSettingsRepo()); // { owner, repo, branch }
+const UI_OTA_REPO = (savedSettingsRepo()); // { owner, repo, branch }
 const UI_MANIFEST_URL = `https://raw.githubusercontent.com/${UI_OTA_REPO.owner}/${UI_OTA_REPO.repo}/${UI_OTA_REPO.branch}/ui-manifest.json`;
 
 let UI_ROOT = __dirname;          // where windows load their HTML/CSS/JS from
@@ -492,7 +494,7 @@ function savedSettingsRepo() {
     const pkg = require('./package.json');
     const pub = pkg.build && pkg.build.publish;
     if (pub && pub.owner && pub.repo) return { owner: pub.owner, repo: pub.repo, branch: 'main' };
-  } catch {}
+  } catch { }
   return { owner: 'AwaissDev', repo: 'Codeply-App', branch: 'main' };
 }
 
@@ -503,7 +505,7 @@ function getBundledUiVersion() {
 function cmpSemver(a, b) {
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
   const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) { if ((pa[i]||0) !== (pb[i]||0)) return (pa[i]||0) - (pb[i]||0); }
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); }
   return 0;
 }
 
@@ -519,7 +521,7 @@ function resolveUiRoot() {
     if (!st.dir || Number(st.uiVersion) <= bundledV) return __dirname;
     // Only trust the OTA dir if its entry files are actually present.
     if (fs.existsSync(path.join(st.dir, 'Dashboard', 'index.html')) &&
-        fs.existsSync(path.join(st.dir, 'Renderer', 'index.html'))) {
+      fs.existsSync(path.join(st.dir, 'Renderer', 'index.html'))) {
       currentUiVersion = Number(st.uiVersion);
       return st.dir;
     }
@@ -542,7 +544,7 @@ function applyUiBundle(uiVersion, bundle) {
   }
   // Sanity-check the entry files exist before we switch to it.
   if (!fs.existsSync(path.join(dir, 'Dashboard', 'index.html')) ||
-      !fs.existsSync(path.join(dir, 'Renderer', 'index.html'))) {
+    !fs.existsSync(path.join(dir, 'Renderer', 'index.html'))) {
     throw new Error('bundle missing entry files');
   }
   fs.writeFileSync(path.join(otaBase, 'state.json'), JSON.stringify({ uiVersion, dir }));
@@ -582,7 +584,7 @@ async function checkUiUpdate() {
     reloadUiWindows();
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
       dashboardWindow.webContents.once('did-finish-load', () => {
-        setTimeout(() => { try { dashboardWindow.webContents.send('ui:updated', { version: newV }); } catch {} }, 250);
+        setTimeout(() => { try { dashboardWindow.webContents.send('ui:updated', { version: newV }); } catch { } }, 250);
       });
     }
     console.log('[ui-ota] applied UI version', newV);
@@ -1076,7 +1078,7 @@ ipcMain.handle('settings:save', async (_, settings) => {
 function broadcastSettingsUpdated() {
   [popupWindow, dashboardWindow].forEach(w => {
     if (w && !w.isDestroyed()) {
-      try { w.webContents.send('settings:updated', savedSettings); } catch {}
+      try { w.webContents.send('settings:updated', savedSettings); } catch { }
     }
   });
 }
@@ -1135,7 +1137,7 @@ ipcMain.handle('history:get-cloud-stats', async () => {
     data.forEach(r => {
       const m = r.model || 'unknown';
       if (!byModel[m]) byModel[m] = { tokens: 0, requests: 0 };
-      byModel[m].tokens   += r.tokens_total || 0;
+      byModel[m].tokens += r.tokens_total || 0;
       byModel[m].requests += 1;
     });
     return { totalTokens, totalRequests: data.length, byModel };
@@ -1413,11 +1415,11 @@ Response format:
     saveUsage(usageData);
     // Log to cloud (fire-and-forget)
     logUsageToCloud({
-      model:       aiResult.modelUsed || savedSettings.model,
-      tokensIn:    usg.prompt_tokens     || 0,
-      tokensOut:   usg.completion_tokens || 0,
+      model: aiResult.modelUsed || savedSettings.model,
+      tokensIn: usg.prompt_tokens || 0,
+      tokensOut: usg.completion_tokens || 0,
       tokensTotal: tokensUsed,
-      promptText:  instruction,
+      promptText: instruction,
       filePath,
     });
 
@@ -1591,12 +1593,12 @@ Response format:
     saveUsage(usageData);
     // Log to cloud (fire-and-forget)
     logUsageToCloud({
-      model:       lastModelUsed || savedSettings.model,
-      tokensIn:    0,
-      tokensOut:   0,
+      model: lastModelUsed || savedSettings.model,
+      tokensIn: 0,
+      tokensOut: 0,
       tokensTotal: totalTokens,
-      promptText:  cleaned,
-      filePath:    filePath || '',
+      promptText: cleaned,
+      filePath: filePath || '',
     });
 
     // Nothing the model produced matches the file → offline fallback.
@@ -1880,7 +1882,7 @@ function formatSupabaseAuthError(raw, context = 'login') {
 // Friendly errors for the 6-digit email code (OTP) step.
 function formatOtpError(raw) {
   let msg = typeof raw === 'string' ? raw : (raw?.message || raw?.msg || '');
-  try { const p = JSON.parse(msg); msg = p.msg || p.message || msg; } catch {}
+  try { const p = JSON.parse(msg); msg = p.msg || p.message || msg; } catch { }
   const lower = String(msg).toLowerCase();
   if (lower.includes('expired')) return 'That code has expired. Tap “Resend code” to get a fresh one.';
   if (lower.includes('rate') || lower.includes('too many') || lower.includes('seconds')) {
@@ -1923,7 +1925,7 @@ ipcMain.handle('auth:sign-in-email', async (_, { email, password }) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { success: false, error: formatSupabaseAuthError(error, 'login') };
     // Discard the password-only session; login completes only after OTP verify.
-    try { await supabase.auth.signOut({ scope: 'local' }); } catch {}
+    try { await supabase.auth.signOut({ scope: 'local' }); } catch { }
     // Step 2 — email a 6-digit code.
     const { error: otpErr } = await supabase.auth.signInWithOtp({
       email, options: { shouldCreateUser: false }
@@ -1954,8 +1956,8 @@ ipcMain.handle('auth:sign-up-email', async (_, { email, password, name }) => {
     // If a session came back, email confirmation is OFF on the project. We still
     // want a 6-digit code, so drop the session and email a login code instead.
     if (data.session) {
-      try { await supabase.auth.signOut({ scope: 'local' }); } catch {}
-      try { await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } }); } catch {}
+      try { await supabase.auth.signOut({ scope: 'local' }); } catch { }
+      try { await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } }); } catch { }
       return { success: true, needsOtp: true, email, mode: 'login', name: niceName };
     }
 
@@ -2015,12 +2017,12 @@ ipcMain.handle('auth:sign-out', async () => {
     // Clear user identity AND wipe the API key locally — it lives in the cloud,
     // so the next user who logs in gets their own key, not the previous user's.
     // Wipe ALL account-specific settings so the next user gets a clean slate.
-    savedSettings.user         = null;
-    savedSettings.apiKey       = '';
+    savedSettings.user = null;
+    savedSettings.apiKey = '';
     savedSettings.modelRanking = [];
-    savedSettings.provider     = 'openrouter';
-    savedSettings.model        = '';
-    savedSettings.tokenCap     = 0;
+    savedSettings.provider = 'openrouter';
+    savedSettings.model = '';
+    savedSettings.tokenCap = 0;
     persistSettings();
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
@@ -2098,7 +2100,7 @@ function cleanupStrayStartupEntries() {
         data.includes('electron\\dist\\electron.exe');
       // Guard: never touch the legitimate Codeply startup entry.
       if (isDevElectron && !data.includes('codeply')) {
-        exec(`reg delete "${RUN_KEY}" /v "${name}" /f`, () => {});
+        exec(`reg delete "${RUN_KEY}" /v "${name}" /f`, () => { });
       }
     });
   });
@@ -2142,7 +2144,7 @@ app.whenReady().then(async () => {
 
     const sendToDash = (channel, payload) => {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        try { dashboardWindow.webContents.send(channel, payload); } catch {}
+        try { dashboardWindow.webContents.send(channel, payload); } catch { }
       }
     };
 

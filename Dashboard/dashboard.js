@@ -842,6 +842,7 @@ const DASH_PROVIDER_MODELS = {
   kimi:       ['moonshot-v1-128k','moonshot-v1-32k','moonshot-v1-8k','moonshot-v1-auto','kimi-latest','kimi-k1.5','moonshot-v2','kimi-vl-a3b-thinking','moonshot-v1-128k-latest','moonshot-v1-128k-vision-preview'],
   deepseek:   ['deepseek-chat','deepseek-reasoner','deepseek-coder-v2','deepseek-v3','deepseek-r1','deepseek-r1-zero','deepseek-v2.5','deepseek-v2','deepseek-coder','deepseek-r1-lite-preview'],
   minimax:    ['MiniMax-Text-01','minimax-01','MiniMax-VL-01','abab6.5s-chat','abab6.5-chat','abab6.5t-chat','abab6.5g-chat','abab6-chat','abab5.5s-chat','abab5.5-chat'],
+  'ollama-cloud': ['deepseek-v3.1:671b-cloud','qwen3-coder:480b-cloud','gpt-oss:120b-cloud','gpt-oss:20b-cloud','kimi-k2:1t-cloud','llama4:scout-cloud','gemma3:27b-cloud','qwen3:32b-cloud','phi4:14b-cloud','mistral:7b-cloud'],
 };
 
 function dashPopulateModelSel(provider, currentModel) {
@@ -879,7 +880,8 @@ const MR_PROVIDER_PLACEHOLDER = {
   kimi:       'e.g. moonshot-v1-32k',
   google:     'e.g. gemini-2.0-flash',
   anthropic:  'e.g. claude-sonnet-4-6',
-  ollama:     'e.g. llama3.1  (must be pulled locally)',
+  ollama:           'e.g. llama3.1  (must be pulled locally)',
+  'ollama-cloud':   'e.g. deepseek-v3.1:671b-cloud',
   custom:     'model id',
 };
 
@@ -904,10 +906,13 @@ function mrMakeRow(entry, idx) {
       <option value="google">Google</option>
       <option value="anthropic">Anthropic</option>
       <option value="ollama">Ollama (local)</option>
+      <option value="ollama-cloud">Ollama (cloud)</option>
       <option value="custom">Custom…</option>
     </select>
     <input class="mr-model-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem"
            type="text" placeholder="${placeholder}" value="${escHtml(entry.modelId || '')}">
+    <input class="mr-url-inp field-input" style="height:32px;padding:0 10px;font-size:0.72rem;width:180px;flex-shrink:0;display:none"
+           type="text" placeholder="Custom endpoint URL" value="${escHtml(entry.customUrl || '')}">
     <input class="mr-key-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem;width:148px;flex-shrink:0"
            type="password" placeholder="API Key" autocomplete="off">
     <button class="mr-default${entry.isDefault ? ' on' : ''}" title="${entry.isDefault ? 'Default fallback — used if other models fail' : 'Set as default fallback'}">★</button>
@@ -920,16 +925,27 @@ function mrMakeRow(entry, idx) {
 
   const provSel = div.querySelector('.mr-provider-sel');
   provSel.value = prov;
-  // Ollama is local + keyless — grey out the key field so it's clear none is needed.
+  // Ollama (local) is keyless — grey out the key field.
+  // Ollama (cloud) is a standard keyed provider (key from ollama.com/settings/keys).
+  // Custom shows the URL field.
   const applyProviderUi = () => {
     const p = provSel.value;
     div.querySelector('.mr-model-inp').placeholder = MR_PROVIDER_PLACEHOLDER[p] || 'model id';
     const keyInp = div.querySelector('.mr-key-inp');
+    const urlInp = div.querySelector('.mr-url-inp');
+    // URL field: only visible for custom provider
+    if (urlInp) {
+      urlInp.style.display = p === 'custom' ? '' : 'none';
+    }
     if (p === 'ollama') {
       keyInp.value = '';
       keyInp.placeholder = 'No key needed';
       keyInp.disabled = true;
       keyInp.style.opacity = '0.5';
+    } else if (p === 'ollama-cloud') {
+      keyInp.placeholder = 'Ollama API Key';
+      keyInp.disabled = false;
+      keyInp.style.opacity = '';
     } else {
       keyInp.placeholder = 'API Key';
       keyInp.disabled = false;
@@ -1006,6 +1022,7 @@ function getModelRankingData() {
     provider:  item.querySelector('.mr-provider-sel')?.value || 'openrouter',
     modelId:   item.querySelector('.mr-model-inp')?.value?.trim() || '',
     apiKey:    item.querySelector('.mr-key-inp')?.value || '',
+    customUrl: item.querySelector('.mr-url-inp')?.value?.trim() || '',
     enabled:   !item.querySelector('.mr-toggle')?.classList.contains('off'),
     isDefault: item.querySelector('.mr-default')?.classList.contains('on') || false,
   })).filter(m => m.modelId);

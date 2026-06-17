@@ -100,7 +100,8 @@ function updateActiveModelChip() {
 async function loadModels() {
   try {
     const settings = await requireCodeply().getSettings();
-    _models = (settings.modelRanking || []).filter(m => m.modelId && m.apiKey);
+    // Ollama (local) is keyless — keep it; every other provider needs a key.
+    _models = (settings.modelRanking || []).filter(m => m.modelId && (m.apiKey || m.provider === 'ollama'));
     // Auto-select first model if nothing selected or selected model gone
     if (!selectedModelId || !_models.find(m => m.id === selectedModelId)) {
       selectedModelId = _models.length ? _models[0].id : null;
@@ -291,9 +292,11 @@ function friendlyError(raw) {
   const s = String(raw).toLowerCase();
   const detail = String(raw).slice(0, 120); // show up to 120 chars of raw error for debugging
 
-  // ① No API key set — check this FIRST (most common cause of fetch failures)
-  if (!_apiKey)
-    return { title: 'No API key', msg: 'Add your API key in Dashboard → Settings, then save.' };
+  // ① No model configured at all (no legacy key AND no models in the ranking).
+  //    If models ARE configured (incl. keyless Ollama), fall through to the real
+  //    error below instead of falsely blaming a missing key.
+  if (!_apiKey && !_models.length)
+    return { title: 'No API key', msg: 'Add a model in Dashboard → Settings, then save.' };
 
   // ② Credits / billing
   if (s.includes('credits') || s.includes('afford') || s.includes('billing') || s.includes('payment'))
@@ -324,7 +327,7 @@ function friendlyError(raw) {
     return { title: 'Server error', msg: `The AI provider is having issues — try again shortly. (${detail})` };
 
   // ⑨ Network / connection — only after all other checks
-  if (s.includes('enotfound') || s.includes('econnrefused') || s.includes('econnreset') || s.includes('failed to fetch') || s.includes('networkerror') || s.includes('network error') || s.includes('offline'))
+  if (s.includes('enotfound') || s.includes('econnrefused') || s.includes('econnreset') || s.includes('failed to fetch') || s.includes('fetch failed') || s.includes('networkerror') || s.includes('network error'))
     return { title: 'Connection failed', msg: `Could not reach the API. Check your internet, firewall, or API base URL. (${detail})` };
 
   // ⑩ Generic fallback — show the raw error so user can diagnose
@@ -399,8 +402,10 @@ bindClick('analyzeBtn', async () => {
   analysisResult = result.result;
   const r = analysisResult;
 
-  // Detect AI failure that leaked into a "successful" offline result
-  const reasonHasError = r.reason && /offline|fetch failed|failed to fetch|credits|used offline|no endpoint|not found|afford|max_token|rate limit|unauthorized|forbidden|api key|server error|timed out|enotfound|econnrefused/i.test(r.reason);
+  // Detect a REAL AI failure that leaked into a "successful" offline result.
+  // NB: don't match bare "offline" — the normal local-placement fallback reason
+  // legitimately says "used offline placement", which is NOT an error.
+  const reasonHasError = r.reason && /all models failed|fetch failed|failed to fetch|credits|no endpoint|invalid model|afford|max_token|rate limit|unauthorized|forbidden|api key|invalid key|server error|timed out|enotfound|econnrefused|econnreset|http [45]\d\d/i.test(r.reason);
   if (reasonHasError) {
     const { title, msg } = friendlyError(r.reason);
     setStatus('error', title, msg);
