@@ -68,6 +68,16 @@ contextBridge.exposeInMainWorld('codeply', {
     getStats()  { return ipcRenderer.invoke('history:get-cloud-stats'); },
   },
 
+  // ── Bug reports + admin ─────────────────────────────────────────────────────
+  bugs: {
+    submit(payload) { return ipcRenderer.invoke('bug:submit', payload); },
+    list()          { return ipcRenderer.invoke('bug:list'); },
+    setStatus(id, status) { return ipcRenderer.invoke('bug:set-status', { id, status }); },
+  },
+  admin: {
+    check() { return ipcRenderer.invoke('admin:check'); },
+  },
+
   // ── App controls ────────────────────────────────────────────────────────────
   app: {
     restart() { return ipcRenderer.invoke('app:restart'); },

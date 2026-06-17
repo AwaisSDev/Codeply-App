@@ -53,6 +53,7 @@ async function initDashboard() {
   renderSubscriptionPage();
   renderWatchCard();
   initUpdater();
+  initAdmin();
 
   refreshTimer = setInterval(liveRefresh, 5000);
   window.addEventListener('focus', () => { if (oauthPending) pollOAuthSession(); });
@@ -158,6 +159,53 @@ function initUpdater() {
     btn.textContent = 'Restarting…';
     btn.disabled = true;
     try { await cp.updater.install(); } catch (e) { setStage('error', { message: e.message }); }
+  });
+}
+
+// ─── Bug reports / admin ────────────────────────────────────────────────────────
+async function initAdmin() {
+  try {
+    const { isAdmin } = await window.codeply.admin.check();
+    const nav = document.getElementById('navAdmin');
+    if (!isAdmin || !nav) return;
+    nav.style.display = 'flex';
+    const bugs = await window.codeply.bugs.list();
+    const open = bugs.filter(b => b.status !== 'closed' && b.status !== 'resolved').length;
+    const badge = document.getElementById('adminBugBadge');
+    if (badge && open > 0) { badge.textContent = open; badge.style.display = 'inline-block'; }
+  } catch {}
+}
+
+async function loadBugReports() {
+  const wrap = document.getElementById('bugListWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  let bugs = [];
+  try { bugs = await window.codeply.bugs.list(); } catch {}
+  if (!bugs.length) {
+    wrap.innerHTML = '<div class="empty-state"><span class="icon">🐞</span>No bug reports yet.</div>';
+    return;
+  }
+  wrap.innerHTML = `<table class="history-table">
+    <thead><tr><th>When</th><th>From</th><th>Title</th><th>Details</th><th>Ver</th><th>Status</th></tr></thead>
+    <tbody>${bugs.map(b => `
+      <tr>
+        <td class="td-time">${relTime(b.created_at)}</td>
+        <td class="td-file">${escHtml(b.user_email || '—')}</td>
+        <td style="font-weight:600;color:var(--text)">${escHtml(b.title || '—')}</td>
+        <td style="max-width:300px;white-space:normal;color:var(--text2);font-size:0.8rem">${escHtml(b.description || '')}</td>
+        <td class="badge-model">${escHtml(b.app_version || '—')}</td>
+        <td>
+          <select class="bug-status" data-id="${b.id}" style="height:28px;border-radius:6px;border:1px solid var(--border-light);font-size:0.72rem;padding:0 6px">
+            ${['open','in-progress','resolved','closed'].map(s => `<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </td>
+      </tr>`).join('')}</tbody></table>`;
+  wrap.querySelectorAll('.bug-status').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      await window.codeply.bugs.setStatus(sel.dataset.id, sel.value);
+      showToast('Status updated', 'success');
+    });
   });
 }
 
@@ -1229,8 +1277,37 @@ function wireAllHandlers() {
       if (page === 'overview')      { renderOverview(); renderWatchCard(); }
       if (page === 'history')       { loadCloudHistoryData().then(() => renderHistory()); renderHistory(); }
       if (page === 'subscription')  renderSubscriptionPage();
+      if (page === 'admin')         loadBugReports();
     });
   });
+
+  // Early-access banner → jump to the Report a Bug page.
+  bindClick('bannerReportBtn', () => {
+    document.querySelector('.nav-item[data-page="reportbug"]')?.click();
+  });
+
+  // Submit a bug report.
+  bindClick('submitBugBtn', async () => {
+    const title = document.getElementById('bugTitle').value.trim();
+    const desc  = document.getElementById('bugDesc').value.trim();
+    if (!title && !desc) { showToast('Add a title or description first', 'error'); return; }
+    const btn = document.getElementById('submitBugBtn');
+    const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await codeply.bugs.submit({ title, description: desc });
+      if (res && res.success) {
+        document.getElementById('bugTitle').value = '';
+        document.getElementById('bugDesc').value = '';
+        document.getElementById('bugThanks').style.display = 'block';
+        setTimeout(() => { const t = document.getElementById('bugThanks'); if (t) t.style.display = 'none'; }, 4000);
+        showToast('Bug report sent — thank you!', 'success');
+      } else {
+        showToast(res?.error || 'Could not send report', 'error');
+      }
+    } finally { btn.disabled = false; btn.textContent = orig; }
+  });
+
+  bindClick('refreshBugsBtn', loadBugReports);
 
   bindClick('pickFolderBtn', async () => {
     const result = await codeply.pickWatchFolder();

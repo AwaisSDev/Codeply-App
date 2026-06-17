@@ -1177,14 +1177,73 @@ ipcMain.handle('update:download', async () => {
   catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle('update:install', () => {
-  // Mark as quitting so the dashboard's close handler doesn't swallow the quit,
-  // then quit → run the installer silently → relaunch the new version.
+  // The app wouldn't relaunch because two things blocked a clean quit:
+  //  1. the tray keeps the process alive after windows close, and
+  //  2. the dashboard's 'close' handler hides the window instead of closing it.
+  // Clear both, then quitAndInstall(silent, forceRunAfter) installs + relaunches.
   app.isQuiting = true;
+  try { if (tray) { tray.destroy(); tray = null; } } catch {}
+  try {
+    BrowserWindow.getAllWindows().forEach(w => { try { w.removeAllListeners('close'); } catch {} });
+  } catch {}
   setImmediate(() => {
     try { autoUpdater.quitAndInstall(true, true); }
     catch (e) { console.warn('[updater] quitAndInstall failed:', e.message); }
   });
   return { ok: true };
+});
+
+// ── Bug reports + admin (Supabase) ────────────────────────────────────────────
+ipcMain.handle('admin:check', async () => {
+  try {
+    await ensureSupabaseReady();
+    if (!supabase) return { isAdmin: false };
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return { isAdmin: false };
+    const { data } = await supabase.from('profiles').select('is_admin').eq('id', session.user.id).single();
+    return { isAdmin: !!(data && data.is_admin) };
+  } catch { return { isAdmin: false }; }
+});
+
+ipcMain.handle('bug:submit', async (_, payload) => {
+  try {
+    await ensureSupabaseReady();
+    if (!supabase) return { success: false, error: 'Not connected' };
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return { success: false, error: 'Please sign in to report a bug.' };
+    const { error } = await supabase.from('bug_reports').insert({
+      user_id:     session.user.id,
+      user_email:  session.user.email || '',
+      title:       (payload?.title || '').slice(0, 200),
+      description: (payload?.description || '').slice(0, 4000),
+      app_version: app.getVersion(),
+      status:      'open',
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('bug:list', async () => {
+  try {
+    await ensureSupabaseReady();
+    if (!supabase) return [];
+    const { data, error } = await supabase
+      .from('bug_reports')
+      .select('id, created_at, user_email, title, description, app_version, status')
+      .order('created_at', { ascending: false })
+      .limit(300);
+    return error ? [] : (data || []);
+  } catch { return []; }
+});
+
+ipcMain.handle('bug:set-status', async (_, { id, status }) => {
+  try {
+    await ensureSupabaseReady();
+    if (!supabase) return { success: false };
+    const { error } = await supabase.from('bug_reports').update({ status }).eq('id', id);
+    return { success: !error, error: error?.message };
+  } catch (e) { return { success: false, error: e.message }; }
 });
 ipcMain.handle('shell:open-external', async (_, url) => {
   console.log('[codeply] open-external called:', url);
@@ -2142,10 +2201,14 @@ app.whenReady().then(async () => {
     autoUpdater.autoInstallOnAppQuit = false;  // install/restart is user-driven
     autoUpdater.allowDowngrade = false;
 
+    // Broadcast update events to BOTH the dashboard and the popup so the
+    // "update required" page shows up wherever the user is looking.
     const sendToDash = (channel, payload) => {
-      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        try { dashboardWindow.webContents.send(channel, payload); } catch { }
-      }
+      [dashboardWindow, popupWindow].forEach(w => {
+        if (w && !w.isDestroyed()) {
+          try { w.webContents.send(channel, payload); } catch { }
+        }
+      });
     };
 
     autoUpdater.on('update-available', (info) => {

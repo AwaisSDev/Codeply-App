@@ -748,7 +748,52 @@ bindClick('popupPaywallBtn', () => codeply.openDashboard());
 
     codeply.refreshSnippet();
     checkSubscriptionAndBlock();
+    initPopupUpdater();
   })();
+}
+
+// ─── In-app update overlay (popup) ──────────────────────────────────────────────
+function initPopupUpdater() {
+  const up = window.codeply && window.codeply.updater;
+  if (!up) return;
+  const $ = (id) => document.getElementById(id);
+  const overlay = $('popupUpdate');
+  if (!overlay) return;
+
+  const show = (stage) => {
+    overlay.style.display = 'flex';
+    const prog = $('puProgressWrap'), install = $('puInstallBtn'), restart = $('puRestartBtn');
+    const title = $('puTitle'), sub = $('puSub');
+    prog.style.display = 'none'; install.style.display = 'none'; restart.style.display = 'none';
+    if (stage === 'available') {
+      title.textContent = 'Update Required';
+      sub.textContent = 'A new version of Codeply is available. Install it to keep going.';
+      install.style.display = 'block';
+    } else if (stage === 'downloading') {
+      title.textContent = 'Installing Update';
+      sub.textContent = 'Downloading the latest version — please keep Codeply open.';
+      prog.style.display = 'block';
+    } else if (stage === 'downloaded') {
+      title.textContent = 'Update Ready';
+      sub.textContent = 'Restart Codeply to finish installing the new version.';
+      restart.style.display = 'block';
+    }
+  };
+
+  up.onAvailable?.(() => show('available'));
+  up.onProgress?.((p) => {
+    show('downloading');
+    const pct = Math.max(0, Math.min(100, p.percent || 0));
+    $('puBar').style.width = pct + '%';
+    $('puPct').textContent = pct + '%';
+  });
+  up.onDownloaded?.(() => show('downloaded'));
+
+  bindClick('puInstallBtn', async () => { show('downloading'); try { await up.download(); } catch {} });
+  bindClick('puRestartBtn', async () => {
+    const b = $('puRestartBtn'); b.textContent = 'Restarting…'; b.disabled = true;
+    try { await up.install(); } catch {}
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

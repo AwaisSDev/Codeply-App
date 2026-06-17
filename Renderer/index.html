@@ -325,6 +325,38 @@
 </head>
 <body>
   <main class="popup" style="position:relative">
+
+    <!-- In-app update overlay (mirrors the dashboard's update page) -->
+    <div id="popupUpdate" style="
+      display:none; position:absolute; inset:0; z-index:9000;
+      background:linear-gradient(160deg,#fffdf9 0%,#fdf6e9 45%,#f4e6c8 100%);
+      flex-direction:column; align-items:center; justify-content:center;
+      text-align:center; padding:24px; border-radius:inherit;
+    ">
+      <div style="width:54px;height:54px;border-radius:50%;margin-bottom:16px;
+        background:linear-gradient(135deg,#e8f0fe,#d2e3fc);display:flex;align-items:center;justify-content:center">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#4285F4" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </div>
+      <div id="puTitle" style="font-size:1.1rem;font-weight:800;color:#1d2230;margin-bottom:6px">Update Required</div>
+      <div id="puSub" style="font-size:0.78rem;color:#565f72;line-height:1.5;margin-bottom:16px;max-width:280px">A new version of Codeply is available. Install it to keep going.</div>
+
+      <div id="puProgressWrap" style="display:none;width:100%;max-width:260px;margin-bottom:16px;text-align:left">
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono,monospace);font-size:0.66rem;color:#565f72;margin-bottom:6px">
+          <span>Downloading…</span><span id="puPct">0%</span>
+        </div>
+        <div style="height:8px;border-radius:5px;background:#eef1f6;overflow:hidden">
+          <div id="puBar" style="height:100%;width:0%;border-radius:5px;background:linear-gradient(90deg,#4285F4,#7c6cf0);transition:width .25s"></div>
+        </div>
+      </div>
+
+      <button id="puInstallBtn" style="width:100%;max-width:260px;height:42px;border-radius:21px;border:none;
+        background:linear-gradient(135deg,#4285F4,#1a6ff0);color:#fff;font-size:0.85rem;font-weight:700;
+        cursor:pointer;box-shadow:0 4px 14px rgba(66,133,244,.35)">Install Update</button>
+      <button id="puRestartBtn" style="display:none;width:100%;max-width:260px;height:42px;border-radius:21px;border:none;
+        background:linear-gradient(135deg,#1f8f43,#16a34a);color:#fff;font-size:0.85rem;font-weight:700;
+        cursor:pointer;box-shadow:0 4px 14px rgba(31,143,67,.35)">Restart &amp; Install</button>
+    </div>
+
     <!-- Paywall overlay (shown when subscription check fails) -->
     <div class="paywall-popup" id="popupPaywall">
       <div class="paywall-popup-icon-wrap"><span id="popupPaywallIcon">🔒</span></div>
