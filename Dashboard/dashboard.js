@@ -1300,7 +1300,7 @@ function wireAllHandlers() {
         document.getElementById('bugDesc').value = '';
         document.getElementById('bugThanks').style.display = 'block';
         setTimeout(() => { const t = document.getElementById('bugThanks'); if (t) t.style.display = 'none'; }, 4000);
-        showToast('Bug report sent — thank you!', 'success');
+        showToast('Bug report sent, thank you!', 'success');
       } else {
         showToast(res?.error || 'Could not send report', 'error');
       }
