@@ -233,6 +233,7 @@ function providerUrl(provider, customUrl) {
     case 'kimi':      return 'https://api.moonshot.cn/v1/chat/completions';
     case 'google':    return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     case 'anthropic': return 'https://api.anthropic.com/v1/messages';
+    case 'ollama':    return customUrl || 'http://localhost:11434/v1/chat/completions';
     case 'custom':    return customUrl || 'https://openrouter.ai/api/v1/chat/completions';
     default:          return 'https://openrouter.ai/api/v1/chat/completions';
   }
@@ -269,11 +270,12 @@ async function callSingleModel(entry, messages, expectJson) {
     return { ok: res.ok, status: res.status, data };
   }
 
-  // OpenAI-compatible (OpenRouter, OpenAI, Groq, xAI, DeepSeek, Kimi, Google)
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${entry.apiKey}`,
-  };
+  // OpenAI-compatible (OpenRouter, OpenAI, Groq, xAI, DeepSeek, Kimi, Google, Ollama)
+  const headers = { 'Content-Type': 'application/json' };
+  // Ollama runs locally and needs no auth; everything else uses a bearer key.
+  if (entry.provider !== 'ollama') {
+    headers['Authorization'] = `Bearer ${entry.apiKey || ''}`;
+  }
   if ((entry.provider || 'openrouter') === 'openrouter') {
     headers['HTTP-Referer'] = 'https://codeply.app';
     headers['X-Title'] = 'Codeply';
@@ -300,7 +302,8 @@ async function callSingleModel(entry, messages, expectJson) {
  */
 async function callAI(selectedModelId, messages, expectJson = true) {
   const allModels = (savedSettings.modelRanking || [])
-    .filter(m => m.enabled !== false && m.apiKey && m.modelId);
+    // Ollama is local and keyless; every other provider needs an API key.
+    .filter(m => m.enabled !== false && m.modelId && (m.apiKey || m.provider === 'ollama'));
 
   // Put selected model first, then the rest in order
   let ordered;
@@ -1455,7 +1458,7 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, selectedModelId })
 
   // ── Natural-language instruction → edit command ──
   if (looksLikeInstruction(raw)) {
-    const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && m.apiKey);
+    const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && (m.apiKey || m.provider === 'ollama'));
     if (!savedSettings.apiKey && !hasModels) {
       return { success: true, result: localCommand(raw, filePath), tokensUsed: 0, local: true };
     }
@@ -1466,7 +1469,7 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, selectedModelId })
   const cleaned = cleanSnippet(raw) || raw;
 
   // No API key and no models configured? Fall back to local heuristic.
-  const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && m.apiKey);
+  const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && (m.apiKey || m.provider === 'ollama'));
   if (!savedSettings.apiKey && !hasModels) {
     return { success: true, result: localAnalyze(cleaned, filePath), tokensUsed: 0, local: true };
   }

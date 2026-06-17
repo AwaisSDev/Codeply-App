@@ -879,6 +879,7 @@ const MR_PROVIDER_PLACEHOLDER = {
   kimi:       'e.g. moonshot-v1-32k',
   google:     'e.g. gemini-2.0-flash',
   anthropic:  'e.g. claude-sonnet-4-6',
+  ollama:     'e.g. llama3.1  (must be pulled locally)',
   custom:     'model id',
 };
 
@@ -902,6 +903,7 @@ function mrMakeRow(entry, idx) {
       <option value="kimi">Kimi</option>
       <option value="google">Google</option>
       <option value="anthropic">Anthropic</option>
+      <option value="ollama">Ollama (local)</option>
       <option value="custom">Custom…</option>
     </select>
     <input class="mr-model-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem"
@@ -918,9 +920,24 @@ function mrMakeRow(entry, idx) {
 
   const provSel = div.querySelector('.mr-provider-sel');
   provSel.value = prov;
-  provSel.addEventListener('change', () => {
-    div.querySelector('.mr-model-inp').placeholder = MR_PROVIDER_PLACEHOLDER[provSel.value] || 'model id';
-  });
+  // Ollama is local + keyless — grey out the key field so it's clear none is needed.
+  const applyProviderUi = () => {
+    const p = provSel.value;
+    div.querySelector('.mr-model-inp').placeholder = MR_PROVIDER_PLACEHOLDER[p] || 'model id';
+    const keyInp = div.querySelector('.mr-key-inp');
+    if (p === 'ollama') {
+      keyInp.value = '';
+      keyInp.placeholder = 'No key needed';
+      keyInp.disabled = true;
+      keyInp.style.opacity = '0.5';
+    } else {
+      keyInp.placeholder = 'API Key';
+      keyInp.disabled = false;
+      keyInp.style.opacity = '';
+    }
+  };
+  provSel.addEventListener('change', applyProviderUi);
+  applyProviderUi();
 
   div.querySelector('.mr-toggle').addEventListener('click', e => {
     const btn = e.currentTarget;
