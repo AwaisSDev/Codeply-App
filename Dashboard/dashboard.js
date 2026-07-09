@@ -41,8 +41,10 @@ async function initDashboard() {
   codeply.auth.onCallback(handleAuthCallback);
 
   if (currentUser) {
-    hideLogin();
     updateUserUI();
+    // Route through the same onboarding gate a fresh sign-in would use — a
+    // returning session (persisted from a previous run) must not skip it.
+    proceedAfterLogin();
   }
 
   await refreshSubscription();
@@ -283,7 +285,7 @@ async function pollOAuthSession() {
       renderHistory();
       setTimeout(async () => {
         hideAuthComplete();
-        hideLogin();
+        proceedAfterLogin();
         await refreshSubscription();
         renderSubscriptionPage();
       }, 6200);
@@ -313,7 +315,7 @@ async function completeAuthSuccess(user) {
   renderHistory();
   setTimeout(async () => {
     hideAuthComplete();
-    hideLogin();
+    proceedAfterLogin();
     await refreshSubscription();
     // Re-fetch settings from main process — it has already loaded this user's
     // cloud API key by the time we get here, so the settings page must refresh.
@@ -431,6 +433,168 @@ function showLogin() {
   lp.style.display = 'flex';
   lp.style.opacity = '0';
   requestAnimationFrame(() => { lp.style.transition = 'opacity .25s'; lp.style.opacity = '1'; });
+}
+
+// ─── First-run onboarding (referral survey → spotlight tour → Alt+C callout) ────
+function hasAnyApiKeyConfigured() {
+  if (settings.apiKey) return true;
+  return (settings.modelRanking || []).some(m => m && m.apiKey);
+}
+
+// Called wherever the login/guest step used to just call hideLogin() directly.
+// Guarded so the whole onboarding sequence can only ever be kicked off once per
+// loaded window — the dashboard window is hidden/shown (not reloaded) while the
+// app runs in the background, so this must not re-fire on every re-open.
+// The gate is simply "no API key configured yet" — no sticky "done forever"
+// flag, because settings are stored per machine, not per account: a stuck flag
+// would hide onboarding for a brand new account that still has no key.
+let onboardingSequenceStarted = false;
+function proceedAfterLogin() {
+  if (onboardingSequenceStarted) { hideLogin(); return; }
+  onboardingSequenceStarted = true;
+
+  if (hasAnyApiKeyConfigured()) {
+    hideLogin();
+    return;
+  }
+  showReferralPage();
+}
+
+function showReferralPage() {
+  document.getElementById('loginPage').style.display = 'none';
+  const rp = document.getElementById('referralPage');
+  rp.style.display = 'flex';
+  rp.style.opacity = '0';
+  requestAnimationFrame(() => { rp.style.transition = 'opacity .25s'; rp.style.opacity = '1'; });
+}
+
+function finishReferralPage(value) {
+  const rp = document.getElementById('referralPage');
+  rp.style.transition = 'opacity .25s';
+  rp.style.opacity = '0';
+  setTimeout(() => { rp.style.display = 'none'; }, 250);
+
+  settings = { ...settings, referralSource: value };
+  codeply.saveSettings({ referralSource: value }).catch(() => {});
+
+  hideLogin();
+  setTimeout(startSpotlightTour, 400);
+}
+
+function initReferralSurvey() {
+  const opts       = Array.from(document.querySelectorAll('#referralOptions .referral-opt'));
+  const otherWrap  = document.getElementById('referralOtherWrap');
+  const otherInput = document.getElementById('referralOtherInput');
+  const continueBtn = document.getElementById('referralContinueBtn');
+  if (!opts.length || !continueBtn) return;
+
+  let selected = null;
+
+  function updateContinue() {
+    if (!selected) { continueBtn.disabled = true; return; }
+    continueBtn.disabled = selected === 'Other' && !otherInput.value.trim();
+  }
+
+  opts.forEach(btn => {
+    btn.addEventListener('click', () => {
+      opts.forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      selected = btn.dataset.value;
+      otherWrap.style.display = selected === 'Other' ? 'block' : 'none';
+      if (selected === 'Other') otherInput.focus();
+      updateContinue();
+    });
+  });
+
+  otherInput?.addEventListener('input', updateContinue);
+  continueBtn.addEventListener('click', () => {
+    if (continueBtn.disabled) return;
+    const value = selected === 'Other' ? (otherInput.value.trim() || 'Other') : selected;
+    finishReferralPage(value);
+  });
+}
+
+// Generic spotlight: dims everything except a glowing hole around `target`.
+// Dismisses itself the moment the user clicks the real element underneath.
+function startSpotlight(target, titleHtml, bodyHtml) {
+  const overlay = document.getElementById('onboardingSpotlight');
+  if (!target || !overlay) return () => {};
+
+  function render() {
+    const r = target.getBoundingClientRect();
+    const pad = 8;
+    const x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
+    const calloutLeft = Math.min(x + w + 16, window.innerWidth - 276);
+    overlay.innerHTML = `
+      <div class="spot-mask" style="left:0;top:0;right:0;height:${Math.max(0, y)}px"></div>
+      <div class="spot-mask" style="left:0;top:${y + h}px;right:0;bottom:0"></div>
+      <div class="spot-mask" style="left:0;top:${y}px;width:${Math.max(0, x)}px;height:${h}px"></div>
+      <div class="spot-mask" style="left:${x + w}px;top:${y}px;right:0;height:${h}px"></div>
+      <div class="spot-ring" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>
+      <div class="spot-callout" style="left:${Math.max(16, calloutLeft)}px;top:${y}px">
+        <strong>${titleHtml}</strong>
+        ${bodyHtml}
+      </div>
+    `;
+  }
+
+  render();
+  overlay.style.display = 'block';
+  window.addEventListener('resize', render);
+
+  function stop() {
+    overlay.style.display = 'none';
+    overlay.innerHTML = '';
+    window.removeEventListener('resize', render);
+    target.removeEventListener('click', stop);
+  }
+  target.addEventListener('click', stop, { once: true });
+  return stop;
+}
+
+// Step 1: point at the Settings nav item.
+function startSpotlightTour() {
+  const target = document.querySelector('.nav-item[data-page="settings"]');
+  startSpotlight(target, 'Add your AI key',
+    `Click <strong style="display:inline">Settings</strong> to connect an API key. That's all Codeply needs to start working.`);
+}
+
+// Step 2: point at "+ Add Model", shown once the key-getting wizard is dismissed.
+let addModelSpotlightShown = false;
+function maybeSpotlightAddModel() {
+  if (hasAnyApiKeyConfigured() || addModelSpotlightShown) return;
+  if (!document.getElementById('page-settings')?.classList.contains('active')) return;
+  const target = document.getElementById('addModelBtn');
+  if (!target) return;
+  addModelSpotlightShown = true;
+  startSpotlight(target, 'Add a model',
+    `Click <strong style="display:inline">+ Add Model</strong> and paste in the key you just copied.`);
+}
+
+// Step 3 + 4: once a model row exists, walk the user through its name field
+// then its key field. Chained off the actual click that creates the row, so
+// it fires whether that click came from the real button or the spotlight hole.
+let modelFieldSpotlightShown = false;
+function chainOnboardingModelSpotlights(row) {
+  if (hasAnyApiKeyConfigured() || modelFieldSpotlightShown || !row) return;
+  modelFieldSpotlightShown = true;
+  setTimeout(() => {
+    const nameInp = row.querySelector('.mr-model-inp');
+    const keyInp  = row.querySelector('.mr-key-inp');
+    if (!nameInp || !keyInp) return;
+    startSpotlight(nameInp, 'Fast and free model, picked for you',
+      `We filled in <strong style="display:inline">${DEFAULT_FREE_MODEL}</strong>, a fast, free model. Leave it as is, or change it, then click the key field.`);
+    nameInp.addEventListener('click', () => {
+      startSpotlight(keyInp, 'Paste your key here',
+        `Paste the API key you copied, then click the checkmark to save.`);
+    }, { once: true });
+  }, 150);
+}
+
+// Shown right after the user saves their first API key.
+function showOnboardingDoneModal() {
+  const modal = document.getElementById('onboardingDoneModal');
+  if (modal) modal.style.display = 'flex';
 }
 
 // ─── 6-digit code (OTP) step ────────────────────────────────────────────────────
@@ -918,6 +1082,9 @@ function dashPopulateModelSel(provider, currentModel) {
 
 // ─── Model Ranking UI ─────────────────────────────────────────────────────────
 
+// Suggested default: fast and free, so a brand new model row already works out of the box.
+const DEFAULT_FREE_MODEL = 'poolside/laguna-xs.2:free';
+
 const MR_PROVIDER_PLACEHOLDER = {
   openrouter: 'e.g. google/gemini-2.5-flash',
   openai:     'e.g. gpt-4o',
@@ -963,8 +1130,8 @@ function mrMakeRow(entry, idx) {
            type="text" placeholder="Custom endpoint URL" value="${escHtml(entry.customUrl || '')}">
     <input class="mr-key-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem;width:148px;flex-shrink:0"
            type="password" placeholder="API Key" autocomplete="off">
-    <button class="mr-default${entry.isDefault ? ' on' : ''}" title="${entry.isDefault ? 'Default fallback — used if other models fail' : 'Set as default fallback'}">★</button>
-    <button class="mr-toggle${enabled ? '' : ' off'}" title="${enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">${enabled ? '✓' : '○'}</button>
+    <button class="mr-default${entry.isDefault ? ' on' : ''}" title="${entry.isDefault ? 'Default fallback, used if other models fail' : 'Set as default fallback'}">★</button>
+    <button class="mr-toggle${enabled ? '' : ' off'}" title="${enabled ? 'Enabled, click to disable' : 'Disabled, click to enable'}">${enabled ? '✓' : '○'}</button>
     <button class="mr-delete" title="Remove model">✕</button>
   `;
 
@@ -1007,7 +1174,7 @@ function mrMakeRow(entry, idx) {
     const btn = e.currentTarget;
     const on = btn.classList.toggle('off');  // toggles off, returns new state
     btn.textContent = on ? '○' : '✓';
-    btn.title = on ? 'Disabled — click to enable' : 'Enabled — click to disable';
+    btn.title = on ? 'Disabled, click to enable' : 'Enabled, click to disable';
   });
 
   // Default model = radio behavior: only one row can be the default fallback.
@@ -1020,7 +1187,7 @@ function mrMakeRow(entry, idx) {
     });
     if (turningOn) {
       btn.classList.add('on');
-      btn.title = 'Default fallback — used if other models fail';
+      btn.title = 'Default fallback, used if other models fail';
     }
     mrUpdateFallbackNote();
   });
@@ -1056,9 +1223,9 @@ function mrUpdateFallbackNote() {
   const defRow = document.querySelector('#mrList .mr-default.on');
   const model = defRow?.closest('.mr-item')?.querySelector('.mr-model-inp')?.value?.trim();
   if (model) {
-    note.innerHTML = `Default fallback: <strong style="color:var(--text);margin:0 3px">${escHtml(model)}</strong> — used if your other models fail.`;
+    note.innerHTML = `Default fallback: <strong style="color:var(--text);margin:0 3px">${escHtml(model)}</strong>, used if your other models fail.`;
   } else {
-    note.innerHTML = `Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback — used if your other models fail.`;
+    note.innerHTML = `Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback, used if your other models fail.`;
   }
 }
 
@@ -1106,6 +1273,25 @@ function showToast(msg, type = '') {
 
 function wireAllHandlers() {
   const codeply = requireCodeply();
+
+  initReferralSurvey();
+  bindClick('onboardingDoneBtn', () => {
+    const modal = document.getElementById('onboardingDoneModal');
+    if (modal) modal.style.display = 'none';
+  });
+
+  // The API-key wizard has its own open/close logic (inline script at the bottom
+  // of index.html) — piggyback on its close/finish clicks to chain the next
+  // onboarding step without touching that code.
+  ['orWizardClose', 'orNext'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', () => {
+      setTimeout(() => {
+        if (!document.getElementById('orWizardOverlay')?.classList.contains('open')) {
+          maybeSpotlightAddModel();
+        }
+      }, 50);
+    });
+  });
 
   bindClick('paywallSignout', async () => {
     await codeply.auth.signOut();
@@ -1228,7 +1414,7 @@ function wireAllHandlers() {
   bindClick('loginSkip', () => {
     currentUser = null;
     updateUserUI();
-    hideLogin();
+    proceedAfterLogin();
   });
 
   bindClick('signOutBtn', async () => {
@@ -1278,12 +1464,11 @@ function wireAllHandlers() {
       if (page === 'history')       { loadCloudHistoryData().then(() => renderHistory()); renderHistory(); }
       if (page === 'subscription')  renderSubscriptionPage();
       if (page === 'admin')         loadBugReports();
+      if (page === 'settings' && !hasAnyApiKeyConfigured()) {
+        // No key yet — walk them straight into the key guide.
+        setTimeout(() => document.getElementById('orWizardTrigger')?.click(), 300);
+      }
     });
-  });
-
-  // Early-access banner → jump to the Report a Bug page.
-  bindClick('bannerReportBtn', () => {
-    document.querySelector('.nav-item[data-page="reportbug"]')?.click();
   });
 
   // Submit a bug report.
@@ -1352,13 +1537,16 @@ function wireAllHandlers() {
     if (!list) return;
     list.querySelector('.mr-empty')?.remove();
     const idx = list.querySelectorAll('.mr-item').length;
-    list.appendChild(mrMakeRow({ provider: 'openrouter', modelId: '', apiKey: '', enabled: true }, idx));
+    const row = mrMakeRow({ provider: 'openrouter', modelId: DEFAULT_FREE_MODEL, apiKey: '', enabled: true }, idx);
+    list.appendChild(row);
+    chainOnboardingModelSpotlights(row);
   });
 
   bindClick('saveSettingsBtn', async () => {
     const newHotkey   = document.getElementById('s-hotkey')?.value || '';
     const newTokenCap = parseInt(document.getElementById('s-tokenCap')?.value || '0', 10) || 0;
     const newRanking  = getModelRankingData();
+    const wasOnboarding = !hasAnyApiKeyConfigured();
 
     const updated = {
       hotkey:       newHotkey,
@@ -1378,6 +1566,9 @@ function wireAllHandlers() {
       renderTokenCapBar();
       // Settings now apply live — the popup hot-reloads the key/model instantly.
       showToast('Settings applied — no restart needed', 'success');
+      if (wasOnboarding && newRanking.some(m => m && m.apiKey)) {
+        setTimeout(showOnboardingDoneModal, 500);
+      }
     } finally {
       btn.disabled = false; btn.textContent = orig;
     }

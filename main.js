@@ -184,6 +184,14 @@ async function fetchCloudSettings(userId) {
   }
 }
 
+/** Records where the user said they heard about Codeply. Fire-and-forget. */
+async function pushReferralSource(userId, referralSource) {
+  if (!supabase || !userId) return;
+  try {
+    await supabase.from('profiles').update({ referral_source: referralSource }).eq('id', userId);
+  } catch (e) { console.warn('[Cloud] pushReferralSource error:', e.message); }
+}
+
 async function pushCloudSettings(userId, data) {
   if (!supabase || !userId) return { success: false, error: 'Not logged in' };
   try {
@@ -1067,6 +1075,7 @@ ipcMain.handle('settings:save', async (_, settings) => {
     if (!cloudResult.success) {
       return { success: false, error: cloudResult.error };
     }
+    if (settings.referralSource) pushReferralSource(userId, settings.referralSource);
   }
   // Tell the popup + dashboard to pull the new API key / model list immediately,
   // so the next AI request uses them — no app restart needed.
