@@ -1122,7 +1122,7 @@ function dashPopulateModelSel(provider, currentModel) {
 // ─── Model Ranking UI ─────────────────────────────────────────────────────────
 
 // Suggested default: fast and free, so a brand new model row already works out of the box.
-const DEFAULT_FREE_MODEL = 'poolside/laguna-xs.2:free';
+const DEFAULT_FREE_MODEL = 'poolside/laguna-xs-2.1:free';
 
 const MR_PROVIDER_PLACEHOLDER = {
   openrouter: 'e.g. google/gemini-2.5-flash',

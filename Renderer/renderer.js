@@ -426,7 +426,7 @@ function friendlyError(raw) {
 
   // ② Credits / billing
   if (s.includes('credits') || s.includes('afford') || s.includes('billing') || s.includes('payment'))
-    return { title: 'Not enough credits', msg: 'Top up your API credits or switch to a free model like laguna-xs.2.' };
+    return { title: 'Not enough credits', msg: 'Top up your API credits or switch to a free model like laguna-xs-2.1.' };
 
   // ③ Rate limit
   if (s.includes('rate limit') || s.includes('ratelimit') || s.includes('too many request') || s.includes('429'))
