@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('codeply', {
   },
   admin: {
     check() { return ipcRenderer.invoke('admin:check'); },
+    referrals() { return ipcRenderer.invoke('admin:referrals'); },
   },
 
   // ── App controls ────────────────────────────────────────────────────────────

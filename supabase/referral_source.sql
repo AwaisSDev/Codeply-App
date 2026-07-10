@@ -17,3 +17,13 @@ create policy "profiles_update_own" on public.profiles
 
 -- 3) Quick breakdown of where signups are coming from.
 -- select referral_source, count(*) from public.profiles group by referral_source order by count(*) desc;
+
+-- 4) Let an admin read every profile row (needed so the Admin page in the app
+--    can list every user's referral_source, not just their own).
+drop policy if exists "profiles_select_own_or_admin" on public.profiles;
+create policy "profiles_select_own_or_admin" on public.profiles
+  for select to authenticated
+  using (
+    auth.uid() = id
+    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin = true)
+  );

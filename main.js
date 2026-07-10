@@ -196,7 +196,7 @@ async function pushCloudSettings(userId, data) {
   if (!supabase || !userId) return { success: false, error: 'Not logged in' };
   try {
     const accessToken = await getValidAccessToken();
-    if (!accessToken) return { success: false, error: 'Session expired — please log in again' };
+    if (!accessToken) return { success: false, error: 'Session expired, please log in again' };
 
     const res = await fetch(`${SUPABASE_URL}/functions/v1/api-key`, {
       method: 'POST',
@@ -929,7 +929,7 @@ function parseReplaceCommand(text) {
   // (a) Clipboard is itself a complete HTML document -> genuine full-file replace.
   const whole = cleanSnippet(t) || t.trim();
   if (isFullDocument(whole)) {
-    return { content: whole, reason: 'Complete HTML document detected — overwriting the whole file.' };
+    return { content: whole, reason: 'Complete HTML document detected, overwriting the whole file.' };
   }
 
   // (b) Explicit "replace the WHOLE/ENTIRE file with ..." with code on the lines below.
@@ -938,7 +938,7 @@ function parseReplaceCommand(text) {
   if (m && m[1] && WHOLE_FILE_RE.test(firstLine)) {
     const body = cleanSnippet(m[1]) || m[1].trim();
     if (body.length > 20) {
-      return { content: body, reason: 'Explicit whole-file replace — overwriting the file with the pasted code.' };
+      return { content: body, reason: 'Explicit whole-file replace, overwriting the file with the pasted code.' };
     }
   }
 
@@ -965,11 +965,11 @@ function pushClipboardSnippet(force = false) {
   lastClipboard = text;
 
   let summary, kind, language;
-  if (!text) { summary = 'Copy code or type an instruction to get started.'; kind = 'none'; language = '–'; }
-  else if (replaceAll) { summary = 'Full replace detected — Analyze to overwrite the target file.'; kind = 'replace'; language = 'Replace'; }
+  if (!text) { summary = 'Copy code or type an instruction to get started.'; kind = 'none'; language = ''; }
+  else if (replaceAll) { summary = 'Full replace detected. Analyze to overwrite the target file.'; kind = 'replace'; language = 'Replace'; }
   else if (instruction) { summary = 'Instruction detected. Target a file, then hit Analyze.'; kind = 'instruction'; language = 'Command'; }
   else if (code) { summary = 'Code detected. Hit Analyze to find its placement.'; kind = 'code'; language = detectLanguage(text); }
-  else { summary = 'Copied text isn’t code or an instruction.'; kind = 'none'; language = '–'; }
+  else { summary = 'Copied text isn’t code or an instruction.'; kind = 'none'; language = ''; }
 
   popupWindow.webContents.send('snippet:update', {
     text: text || '',
@@ -1246,6 +1246,19 @@ ipcMain.handle('bug:list', async () => {
   } catch { return []; }
 });
 
+ipcMain.handle('admin:referrals', async () => {
+  try {
+    await ensureSupabaseReady();
+    if (!supabase) return [];
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, referral_source, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    return error ? [] : (data || []);
+  } catch { return []; }
+});
+
 ipcMain.handle('bug:set-status', async (_, { id, status }) => {
   try {
     await ensureSupabaseReady();
@@ -1273,7 +1286,7 @@ ipcMain.handle('shell:open-external', async (_, url) => {
 // declared identifier (function/const/class/def/id) against the target file.
 function localAnalyze(code, filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
-    return { action: 'append', startLine: null, endLine: null, anchor: null, reason: 'No target file — paste preview only.', confidence: 40, code };
+    return { action: 'append', startLine: null, endLine: null, anchor: null, reason: 'No target file, paste preview only.', confidence: 40, code };
   }
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
@@ -1299,7 +1312,7 @@ function localAnalyze(code, filePath) {
       return {
         action: 'replace', startLine: start, endLine: endLine,
         anchor: lines.slice(start - 1, endLine).join('\n'),
-        reason: `Found existing <${tag}${snippetId ? ` id="${snippetId}"` : ''}> — replacing that element.`,
+        reason: `Found existing <${tag}${snippetId ? ` id="${snippetId}"` : ''}>, replacing that element.`,
         confidence: 80, code
       };
     }
@@ -1307,7 +1320,7 @@ function localAnalyze(code, filePath) {
     // the right spot, so fall through to append (use an API key for smart placement).
     return {
       action: 'append', startLine: null, endLine: null, anchor: null,
-      reason: `New <${tag}> element — appending to the end (set an API key for precise placement).`, confidence: 45, code
+      reason: `New <${tag}> element, appending to the end (set an API key for precise placement).`, confidence: 45, code
     };
   }
 
@@ -1328,7 +1341,7 @@ function localAnalyze(code, filePath) {
         return {
           action: 'replace', startLine: start, endLine: end,
           anchor: lines.slice(start - 1, end).join('\n'),
-          reason: `Found existing "${ident}" — replacing its definition.`, confidence: 78, code
+          reason: `Found existing "${ident}", replacing its definition.`, confidence: 78, code
         };
       }
     }
@@ -1343,14 +1356,14 @@ function localAnalyze(code, filePath) {
     return {
       action: 'insert_after', startLine: lastImport, endLine: null,
       anchor: lines[lastImport - 1] || null,
-      reason: 'Import detected — placing with the other imports.', confidence: 70, code
+      reason: 'Import detected, placing with the other imports.', confidence: 70, code
     };
   }
 
   // 4) Otherwise append at the end of the file.
   return {
     action: 'append', startLine: null, endLine: null, anchor: null,
-    reason: 'No matching definition — appending to the end of the file.', confidence: 55, code
+    reason: 'No matching definition, appending to the end of the file.', confidence: 55, code
   };
 }
 
@@ -1396,7 +1409,7 @@ function blockEnd(lines, startIdx) {
 // Handles the common "remove / delete" instructions directly against the file.
 function localCommand(instruction, filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
-    return { action: 'none', reason: 'No target file — pick a folder or file first.', confidence: 20, code: '' };
+    return { action: 'none', reason: 'No target file, pick a folder or file first.', confidence: 20, code: '' };
   }
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
@@ -1672,7 +1685,7 @@ Response format:
     // Nothing the model produced matches the file → offline fallback.
     if (!good.length) {
       const fallback = localAnalyze(cleaned, filePath);
-      fallback.reason = 'AI could not produce edits that match the file — used offline placement.';
+      fallback.reason = 'AI could not produce edits that match the file, used offline placement.';
       return { success: true, result: fallback, tokensUsed: totalTokens, local: true };
     }
 
@@ -1684,14 +1697,14 @@ Response format:
       replace: good[0].replace,
       confidence,
       reason: bad.length
-        ? `${reason || 'Prepared edits'} — note: ${bad.length} change(s) couldn't be matched and were skipped.`
+        ? `${reason || 'Prepared edits'}. Note: ${bad.length} change(s) couldn't be matched and were skipped.`
         : (reason || `Prepared ${good.length} edit(s), all verified against the file.`)
     };
     return { success: true, result, tokensUsed: totalTokens, partial: bad.length > 0, modelUsed: lastModelUsed };
 
   } catch (err) {
     const fallback = localAnalyze(cleaned, filePath);
-    fallback.reason = `${err.message} — used offline placement instead.`;
+    fallback.reason = `${err.message}, used offline placement instead.`;
     return { success: true, result: fallback, tokensUsed: totalTokens, local: true };
   }
 });
@@ -1895,10 +1908,10 @@ ipcMain.handle('snippet:apply-to-file', async (_, { filePath, aiPatch, result: r
       if (!res.ok) {
         const label = plan.edits.length > 1 ? `Change ${i + 1} of ${plan.edits.length}` : 'The change';
         const why = res.error === 'multiple'
-          ? 'matches more than one place — ask the AI to include a few more surrounding lines so the target is unique'
+          ? 'matches more than one place, ask the AI to include a few more surrounding lines so the target is unique'
           : res.error === 'empty'
             ? 'had an empty search block'
-            : "wasn't found in the file — it may have changed since the AI read it, so re-analyze";
+            : "wasn't found in the file. It may have changed since the AI read it, so re-analyze";
         // Nothing is written: the file is left exactly as it was (no half-applied mess).
         return { success: false, error: `${label} ${why}. No changes were written.` };
       }

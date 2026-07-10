@@ -321,9 +321,31 @@
       transition: transform .15s, box-shadow .15s;
     }
     .paywall-popup-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(66,133,244,.46); }
+
+    /* ════════════════════════════════════════════
+       POPUP TUTORIAL SPOTLIGHT — dims the popup, leaves a hole around one element
+    ═══════════════════════════════════════════ */
+    #popupSpotlight { position: fixed; inset: 0; z-index: 900; display: none; pointer-events: none; }
+    .spot-mask { position: fixed; background: rgba(20, 22, 28, .66); pointer-events: auto; }
+    .spot-ring {
+      position: fixed; pointer-events: none; border-radius: 14px;
+      box-shadow: 0 0 0 4px rgba(255,255,255,.95), 0 0 0 8px rgba(240,165,0,.55), 0 0 26px 4px rgba(240,165,0,.5);
+      animation: spotPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes spotPulse {
+      0%, 100% { box-shadow: 0 0 0 4px rgba(255,255,255,.95), 0 0 0 8px rgba(240,165,0,.55), 0 0 26px 4px rgba(240,165,0,.5); }
+      50%      { box-shadow: 0 0 0 4px rgba(255,255,255,.95), 0 0 0 11px rgba(240,165,0,.35), 0 0 34px 8px rgba(240,165,0,.35); }
+    }
+    .spot-callout {
+      position: fixed; width: 220px; background: #fff; color: var(--ink);
+      border-radius: 14px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.3);
+      font-family: var(--sans); font-size: 0.78rem; line-height: 1.42; z-index: 901;
+    }
+    .spot-callout strong { display: block; font-size: 0.84rem; margin-bottom: 4px; }
   </style>
 </head>
 <body>
+  <div id="popupSpotlight"></div>
   <main class="popup" style="position:relative">
 
     <!-- In-app update overlay (mirrors the dashboard's update page) -->
@@ -403,7 +425,7 @@
     <!-- File Target -->
     <div class="file-bar">
       <span class="auto-dot" id="autoDot" title="Auto-detecting the file you're editing"></span>
-      <div class="file-path-display" id="filePathDisplay">No folder watched — pick one to auto-detect files</div>
+      <div class="file-path-display" id="filePathDisplay">No folder watched, pick one to auto-detect files</div>
       <button class="browse-btn" id="watchBtn" title="Pick the project folder to auto-detect the file you're editing">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         Watch
@@ -419,7 +441,7 @@
       <div class="line-numbers" id="lineNumbers"></div>
       <pre id="preview">// Copy code OR type an instruction (e.g. "remove all headings"), then Analyze...</pre>
       <div class="preview-footer">
-        <span class="lang-badge" id="langBadge">–</span>
+        <span class="lang-badge" id="langBadge"></span>
       </div>
     </div>
 

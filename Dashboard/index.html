@@ -1431,7 +1431,7 @@
           </div>
           <div class="stat-card s-yellow">
             <div class="stat-label">Avg / Request</div>
-            <div class="stat-value yellow" id="statAvg">–</div>
+            <div class="stat-value yellow" id="statAvg"></div>
           </div>
         </div>
         <div class="watcher-card">
@@ -1440,7 +1440,7 @@
             <div class="watcher-info">
               <div class="watcher-label">File Watcher</div>
               <div class="watcher-folder" id="watchFolder">No folder selected</div>
-              <div class="watcher-file" id="watchFile">—</div>
+              <div class="watcher-file" id="watchFile"></div>
             </div>
           </div>
           <button class="pick-folder-btn" id="pickFolderBtn" type="button">Watch folder</button>
@@ -1459,7 +1459,7 @@
       <div class="page" id="page-history">
         <div class="page-header">
           <div class="page-title">History</div>
-          <div class="page-subtitle">Token usage &amp; every AI request — synced to the cloud</div>
+          <div class="page-subtitle">Token usage &amp; every AI request, synced to the cloud</div>
         </div>
         <!-- Cloud stats panel -->
         <div id="historyStatsWrap" class="hst-stats-wrap"></div>
@@ -1481,7 +1481,7 @@
         <div class="sub-card" id="subCard">
           <div class="sub-badge-free" id="subStatusBadge">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
-            Active — Free
+            Active · Free
           </div>
           <div class="sub-title">Codeply is currently free!</div>
           <div class="sub-desc">All features are available at no cost. When paid plans launch, existing users will get first access and a discount.</div>
@@ -1547,8 +1547,8 @@
               <input id="s-tokenCap" class="field-input" type="number" min="0" step="1000" placeholder="e.g. 100000">
               <div id="tokenCapBarWrap" style="margin-top:8px;display:none">
                 <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.62rem;color:var(--text2);margin-bottom:4px">
-                  <span id="tokenCapUsedLabel">–</span>
-                  <span id="tokenCapPctLabel">–</span>
+                  <span id="tokenCapUsedLabel"></span>
+                  <span id="tokenCapPctLabel"></span>
                 </div>
                 <div style="height:5px;background:var(--border-light);border-radius:4px;overflow:hidden">
                   <div id="tokenCapProgressBar" style="height:100%;background:var(--accent);border-radius:4px;transition:width .4s ease;width:0%"></div>
@@ -1595,7 +1595,7 @@
                 </div>
                 <div class="or-tut-screen" id="orTutScreen"></div>
               </div>
-              <div class="or-tut-caption" id="orTutCaption">Step 1 — Open openrouter.ai</div>
+              <div class="or-tut-caption" id="orTutCaption">Step 1: Open openrouter.ai</div>
               <div class="or-tut-progress"><div class="or-tut-progress-fill" id="orTutProgress"></div></div>
               <div class="or-tut-dots" id="orTutDots"></div>
             </div>
@@ -1654,7 +1654,7 @@
             <input id="bugTitle" class="field-input" type="text" placeholder="e.g. Apply button does nothing on .py files" maxlength="200">
           </div>
           <div class="field">
-            <label class="field-label">Details — steps, what you expected, what happened</label>
+            <label class="field-label">Details: steps, what you expected, what happened</label>
             <textarea id="bugDesc" class="field-input" style="height:140px;resize:vertical;font-family:var(--sans)" placeholder="Describe the bug. The more detail, the faster we can fix it." maxlength="4000"></textarea>
           </div>
           <button class="save-settings-btn" id="submitBugBtn">Submit Bug Report</button>
@@ -1677,6 +1677,17 @@
           </div>
           <div id="bugListWrap">
             <div class="empty-state"><span class="icon">🐞</span>No bug reports yet.</div>
+          </div>
+        </div>
+
+        <div class="table-card" style="margin-top:20px">
+          <div class="table-header">
+            <div class="table-title">Where Users Came From</div>
+            <button class="table-action" id="refreshReferralsBtn">Refresh</button>
+          </div>
+          <div id="referralBreakdown" style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 16px 0"></div>
+          <div id="referralListWrap">
+            <div class="empty-state"><span class="icon">📍</span>No referral data yet.</div>
           </div>
         </div>
       </div>
@@ -1747,7 +1758,7 @@
           <div class="or-step-body">
             <div class="or-step-label">Copy your key</div>
             <div class="or-step-desc">
-              Your key starts with <code style="background:rgba(66,133,244,0.12);padding:1px 5px;border-radius:4px;font-size:0.78rem">sk-or-v1-...</code>. Copy it — you won't see it again!
+              Your key starts with <code style="background:rgba(66,133,244,0.12);padding:1px 5px;border-radius:4px;font-size:0.78rem">sk-or-v1-...</code>. Copy it, you won't see it again!
             </div>
             <div class="or-screen">
               <div class="or-screen-bar">
@@ -1860,27 +1871,27 @@
         {
           // OpenRouter homepage (light)
           url: 'openrouter.ai',
-          caption: 'Step 1 — Click “Get API Key”',
+          caption: 'Step 1: Click “Get API Key”',
           html: `
             <div style="text-align:center;padding-top:8px">
-              <div style="font-size:17px;font-weight:800;color:#1d2230;letter-spacing:-.02em;line-height:1.15">The Unified<br>Interface For LLMs</div>
-              <div style="font-size:9.5px;color:#8b93a4;margin:9px 0 16px">Better prices, better uptime, no subscriptions.</div>
-              <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:9px;padding:9px 20px;font-size:11px;font-weight:700">Get API Key</span>
-              <span style="display:inline-block;margin-left:8px;border:1px solid rgba(0,0,0,.14);color:#3a4150;border-radius:9px;padding:9px 16px;font-size:11px;font-weight:600">Explore Models ✦</span>
+              <div style="font-size:21px;font-weight:800;color:#1d2230;letter-spacing:-.02em;line-height:1.15">The Unified<br>Interface For LLMs</div>
+              <div style="font-size:12px;color:#8b93a4;margin:9px 0 16px">Better prices, better uptime, no subscriptions.</div>
+              <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:9px;padding:9px 20px;font-size:14px;font-weight:700">Get API Key</span>
+              <span style="display:inline-block;margin-left:8px;border:1px solid rgba(0,0,0,.14);color:#3a4150;border-radius:9px;padding:9px 16px;font-size:14px;font-weight:600">Explore Models ✦</span>
             </div>
             <div class="or-sc-cursor" style="left:calc(50% - 38px);top:128px"></div>`
         },
         {
           // API Keys page header with the purple "+ New Key" button
           url: 'openrouter.ai/settings/keys',
-          caption: 'Step 2 — Open API Keys → “+ New Key”',
+          caption: 'Step 2: Open API Keys → “+ New Key”',
           html: `
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
               <div>
-                <div style="font-size:15px;font-weight:800;color:#1d2230">API Keys</div>
-                <div style="font-size:9px;color:#8b93a4;margin-top:4px">Create and manage your API keys.</div>
+                <div style="font-size:19px;font-weight:800;color:#1d2230">API Keys</div>
+                <div style="font-size:12px;color:#8b93a4;margin-top:4px">Create and manage your API keys.</div>
               </div>
-              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:8px;padding:7px 13px;font-size:10px;font-weight:700;white-space:nowrap">+ New Key</span>
+              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:8px;padding:7px 13px;font-size:13px;font-weight:700;white-space:nowrap">+ New Key</span>
             </div>
             <div style="margin-top:16px;border-top:1px solid rgba(0,0,0,.08)"></div>
             <div style="margin-top:16px;height:9px;width:88%;background:#eef1f6;border-radius:5px"></div>
@@ -1888,17 +1899,17 @@
             <div class="or-sc-cursor" style="right:30px;top:26px"></div>`
         },
         {
-          // Create-key modal — matches the real dialog fields
+          // Create-key modal: matches the real dialog fields
           url: 'openrouter.ai/settings/keys',
-          caption: 'Step 3 — Name it, then click “Create”',
+          caption: 'Step 3: Name it, then click “Create”',
           html: `
             <div style="background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:11px;padding:13px;box-shadow:0 14px 36px rgba(0,0,0,.14)">
-              <div style="font-size:9px;color:#3a4150;font-weight:600;margin-bottom:4px">Name</div>
-              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:9px;color:#9aa1ae;margin-bottom:10px">e.g. "Chatbot Key"</div>
-              <div style="font-size:9px;color:#3a4150;font-weight:600;margin-bottom:4px">Credit limit (optional)</div>
-              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:9px;color:#9aa1ae;margin-bottom:12px">Leave blank for unlimited</div>
+              <div style="font-size:12px;color:#3a4150;font-weight:600;margin-bottom:4px">Name</div>
+              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:12px;color:#9aa1ae;margin-bottom:10px">e.g. "Chatbot Key"</div>
+              <div style="font-size:12px;color:#3a4150;font-weight:600;margin-bottom:4px">Credit limit (optional)</div>
+              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:12px;color:#9aa1ae;margin-bottom:12px">Leave blank for unlimited</div>
               <div style="text-align:right">
-                <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:7px;padding:7px 16px;font-size:10px;font-weight:700">Create</span>
+                <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700">Create</span>
               </div>
             </div>
             <div class="or-sc-cursor" style="right:34px;bottom:20px"></div>`
@@ -1906,29 +1917,29 @@
         {
           // Key reveal + copy
           url: 'openrouter.ai/settings/keys',
-          caption: 'Step 4 — Copy your sk-or-v1 key',
+          caption: 'Step 4: Copy your sk-or-v1 key',
           html: `
-            <div style="font-size:12px;font-weight:700;color:#1d2230;margin-bottom:11px">Your API key</div>
+            <div style="font-size:15px;font-weight:700;color:#1d2230;margin-bottom:11px">Your API key</div>
             <div style="display:flex;align-items:center;gap:8px;background:#f7f9fd;border:1px solid rgba(0,0,0,.1);border-radius:8px;padding:10px 11px">
-              <span style="flex:1;font-family:var(--mono);font-size:10px;color:#6d5ef0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sk-or-v1-••••••••••••••••</span>
-              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:6px;padding:6px 12px;font-size:9px;font-weight:700">Copy</span>
+              <span style="flex:1;font-family:var(--mono);font-size:13px;color:#6d5ef0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sk-or-v1-••••••••••••••••</span>
+              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700">Copy</span>
             </div>
-            <div style="font-size:8.5px;color:#8b93a4;margin-top:10px">⚠ You won't be able to see it again — copy it now.</div>
+            <div style="font-size:11px;color:#8b93a4;margin-top:10px">⚠ You won't be able to see it again, copy it now.</div>
             <div class="or-sc-cursor" style="right:30px;top:70px"></div>`
         },
         {
           // Paste into Codeply (light card to contrast with the dark OpenRouter scenes)
           url: 'Codeply › Settings',
-          caption: 'Step 5 — Paste it into Codeply & Save',
+          caption: 'Step 5: Paste it into Codeply & Save',
           html: `
             <div style="background:#fff;border-radius:10px;padding:12px">
-              <div style="font-size:10px;font-weight:800;color:#1d2230;margin-bottom:9px">AI Models</div>
+              <div style="font-size:13px;font-weight:800;color:#1d2230;margin-bottom:9px">AI Models</div>
               <div style="display:flex;align-items:center;gap:7px;border:1.5px solid #4285F4;border-radius:8px;padding:7px 9px;box-shadow:0 0 0 3px rgba(66,133,244,.14)">
-                <span style="font-size:8px;color:#8b93a4">OpenRouter</span>
-                <span style="flex:1;font-family:var(--mono);font-size:9px;color:#1a6ff0">sk-or-v1-a1b2c3d4e5f6</span>
+                <span style="font-size:10px;color:#8b93a4">OpenRouter</span>
+                <span style="flex:1;font-family:var(--mono);font-size:12px;color:#1a6ff0">sk-or-v1-a1b2c3d4e5f6</span>
               </div>
               <div style="margin-top:11px;text-align:center">
-                <span style="display:inline-flex;align-items:center;gap:6px;background:#4285F4;color:#fff;border-radius:7px;padding:7px 15px;font-size:9.5px;font-weight:700">
+                <span style="display:inline-flex;align-items:center;gap:6px;background:#4285F4;color:#fff;border-radius:7px;padding:7px 15px;font-size:12px;font-weight:700">
                   <span style="width:14px;height:14px;border-radius:50%;background:#1f8f43;display:inline-flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
                   Saved
                 </span>

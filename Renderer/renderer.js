@@ -40,6 +40,128 @@ function bindClick(id, handler) {
   });
 }
 
+// ─── First-run popup tutorial (copy code → Analyze → Apply) ────────────────────
+// Walks a brand-new user through the actual popup flow: copy AI-edited code
+// from anywhere, watch it land in the preview, click Analyze, then click Apply.
+// Gated on a persisted per-machine flag (like the dashboard's onboarding) so it
+// only ever runs once, the first time this popup is used. Clicking ANYWHERE in
+// the popup while a step is showing skips straight to the next step (as well as
+// still doing whatever that click normally does, e.g. a real Analyze/Apply).
+let popupTutorialActive = false;
+let popupTutorialStep = 0; // 0 = "copy code", 1 = "click Analyze", 2 = "click Apply"
+let _popupSpotlightStop = null;
+let _popupTutorialClickHandler = null;
+
+function startPopupSpotlight(target, titleHtml, bodyHtml) {
+  const overlay = document.getElementById('popupSpotlight');
+  if (!target || !overlay) return () => {};
+
+  function render() {
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    const x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
+    const calloutWidth = 220;
+    let calloutLeft = x + w / 2 - calloutWidth / 2;
+    calloutLeft = Math.max(10, Math.min(calloutLeft, window.innerWidth - calloutWidth - 10));
+    const showBelow = y < window.innerHeight / 2;
+    const calloutTop = showBelow ? y + h + 12 : null;
+    const calloutBottomAnchor = !showBelow ? (window.innerHeight - y + 12) : null;
+    const calloutStyle = showBelow
+      ? `left:${calloutLeft}px;top:${calloutTop}px`
+      : `left:${calloutLeft}px;bottom:${calloutBottomAnchor}px`;
+    overlay.innerHTML = `
+      <div class="spot-mask" style="left:0;top:0;right:0;height:${Math.max(0, y)}px"></div>
+      <div class="spot-mask" style="left:0;top:${y + h}px;right:0;bottom:0"></div>
+      <div class="spot-mask" style="left:0;top:${y}px;width:${Math.max(0, x)}px;height:${h}px"></div>
+      <div class="spot-mask" style="left:${x + w}px;top:${y}px;right:0;height:${h}px"></div>
+      <div class="spot-ring" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>
+      <div class="spot-callout" style="${calloutStyle}">
+        <strong>${titleHtml}</strong>
+        ${bodyHtml}
+      </div>
+    `;
+  }
+
+  render();
+  overlay.style.display = 'block';
+  window.addEventListener('resize', render);
+
+  function stop() {
+    overlay.style.display = 'none';
+    overlay.innerHTML = '';
+    window.removeEventListener('resize', render);
+    if (_popupSpotlightStop === stop) _popupSpotlightStop = null;
+  }
+  _popupSpotlightStop = stop;
+  return stop;
+}
+
+// Lets a click ANYWHERE in the popup skip the current step forward, while still
+// letting the click reach its real target (e.g. Analyze/Apply keep working).
+function armPopupTutorialSkip() {
+  disarmPopupTutorialSkip();
+  _popupTutorialClickHandler = () => skipPopupTutorialStep();
+  document.addEventListener('click', _popupTutorialClickHandler, { capture: true });
+}
+
+function disarmPopupTutorialSkip() {
+  if (!_popupTutorialClickHandler) return;
+  document.removeEventListener('click', _popupTutorialClickHandler, { capture: true });
+  _popupTutorialClickHandler = null;
+}
+
+function skipPopupTutorialStep() {
+  if (!popupTutorialActive) return;
+  if (popupTutorialStep === 0) showPopupTutorialStep(1);
+  else if (popupTutorialStep === 1) showPopupTutorialStep(2);
+  else if (popupTutorialStep === 2) completePopupTutorial();
+}
+
+function showPopupTutorialStep(step) {
+  popupTutorialStep = step;
+  if (_popupSpotlightStop) _popupSpotlightStop();
+
+  if (step === 0) {
+    startPopupSpotlight(document.getElementById('previewWrap'), 'Copy some AI-edited code',
+      `Copy code from ChatGPT, Cursor, your editor, anywhere. It'll show up here automatically. (Click anywhere to skip)`);
+  } else if (step === 1) {
+    startPopupSpotlight(document.getElementById('analyzeBtn'), 'Click Analyze',
+      `Codeply will figure out exactly where this code belongs.`);
+  } else if (step === 2) {
+    startPopupSpotlight(document.getElementById('applyBtn'), 'Click Apply',
+      `This writes the change into your file.`);
+  }
+  armPopupTutorialSkip();
+}
+
+async function initPopupTutorial() {
+  try {
+    const settings = await requireCodeply().getSettings();
+    if (settings.popupTutorialDone) return;
+  } catch { return; }
+
+  popupTutorialActive = true;
+  showPopupTutorialStep(0);
+}
+
+function advancePopupTutorialAfterCopy() {
+  if (!popupTutorialActive || popupTutorialStep !== 0) return;
+  showPopupTutorialStep(1);
+}
+
+function advancePopupTutorialAfterAnalyze() {
+  if (!popupTutorialActive || popupTutorialStep !== 1) return;
+  showPopupTutorialStep(2);
+}
+
+function completePopupTutorial() {
+  if (!popupTutorialActive) return;
+  popupTutorialActive = false;
+  disarmPopupTutorialSkip();
+  if (_popupSpotlightStop) _popupSpotlightStop();
+  requireCodeply().saveSettings({ popupTutorialDone: true }).catch(() => {});
+}
+
 // ─── Model Picker ──────────────────────────────────────────────────────────────
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -89,7 +211,7 @@ function updateActiveModelChip() {
   if (m) {
     const short = m.modelId.split('/').pop() || m.modelId;
     label.textContent = short;
-    chip.title = `${m.modelId} (${m.provider}) — click to change`;
+    chip.title = `${m.modelId} (${m.provider}), click to change`;
   } else if (_models.length) {
     label.textContent = 'Pick model';
   } else {
@@ -127,6 +249,8 @@ function initPopupRenderer() {
 
   const codeply = requireCodeply();
 
+  initPopupTutorial();
+
 // ─── Clipboard / Snippet Update ────────────────────────────────────────────────
 codeply.onSnippetUpdate((snippet) => {
   if (!snippet) return;
@@ -137,10 +261,12 @@ codeply.onSnippetUpdate((snippet) => {
   const _mb = document.getElementById('modelBadge'); if (_mb) _mb.style.display = 'none';
 
   renderCode(code);
-  langBadge.textContent = snippet.language || '–';
+  langBadge.textContent = snippet.language || '';
 
   const isCode = snippet.isCode !== undefined ? snippet.isCode : !!code;
   analyzeBtn.disabled = !isCode;
+
+  if (isCode) advancePopupTutorialAfterCopy();
 
   const kind = snippet.kind || (isCode ? 'code' : 'none');
 
@@ -160,7 +286,7 @@ codeply.onSnippetUpdate((snippet) => {
     langBadge.style.color = 'var(--green)';
     setTimeout(() => { langBadge.style.color = ''; }, 700);
   } else {
-    setStatus('idle', 'Waiting for code', snippet.summary || 'Copy code or type an instruction — plain text is ignored.');
+    setStatus('idle', 'Waiting for code', snippet.summary || 'Copy code or type an instruction. Plain text is ignored.');
   }
 });
 
@@ -247,7 +373,7 @@ codeply.onActiveFile((f) => {
   }
   if (f.path === currentFile) return;
   setTargetFile(f.path, { manual: false });
-  setStatus('idle', `Targeting ${f.name}`, `${f.lineCount} lines — auto-detected. Hit Analyze.`);
+  setStatus('idle', `Targeting ${f.name}`, `${f.lineCount} lines, auto-detected. Hit Analyze.`);
 });
 
 // ─── Status Helper ─────────────────────────────────────────────────────────────
@@ -273,7 +399,7 @@ bindClick('browseBtn', async () => {
   if (!filePath) return;
   await setTargetFile(filePath, { manual: true });
   const lc = fileContent ? fileContent.split('\n').length : '?';
-  setStatus('idle', 'File locked', `${lc} lines — auto-detect paused. Hit Analyze.`);
+  setStatus('idle', 'File locked', `${lc} lines, auto-detect paused. Hit Analyze.`);
 });
 
 // ─── Watch folder (enables auto-detect) ─────────────────────────────────────────
@@ -304,7 +430,7 @@ function friendlyError(raw) {
 
   // ③ Rate limit
   if (s.includes('rate limit') || s.includes('ratelimit') || s.includes('too many request') || s.includes('429'))
-    return { title: 'Rate limited', msg: 'Too many requests — wait a moment and try again.' };
+    return { title: 'Rate limited', msg: 'Too many requests, wait a moment and try again.' };
 
   // ④ Auth / key invalid
   if (s.includes('api key') || s.includes('apikey') || s.includes('unauthorized') || s.includes('401') || s.includes('invalid key') || s.includes('authentication') || s.includes('forbidden') || s.includes('403'))
@@ -312,7 +438,7 @@ function friendlyError(raw) {
 
   // ⑤ Timeout
   if (s.includes('timeout') || s.includes('timed out') || s.includes('etimedout'))
-    return { title: 'Request timed out', msg: 'The AI took too long — try again or switch to a faster model.' };
+    return { title: 'Request timed out', msg: 'The AI took too long, try again or switch to a faster model.' };
 
   // ⑥ Model / endpoint not found
   if (s.includes('no endpoints') || s.includes('model not found') || s.includes('invalid model') || s.includes('does not exist') || (s.includes('404') && !s.includes('api key')))
@@ -324,7 +450,7 @@ function friendlyError(raw) {
 
   // ⑧ Server error
   if (s.includes('500') || s.includes('502') || s.includes('503') || s.includes('server error') || s.includes('internal error'))
-    return { title: 'Server error', msg: `The AI provider is having issues — try again shortly. (${detail})` };
+    return { title: 'Server error', msg: `The AI provider is having issues, try again shortly. (${detail})` };
 
   // ⑨ Network / connection — only after all other checks
   if (s.includes('enotfound') || s.includes('econnrefused') || s.includes('econnreset') || s.includes('failed to fetch') || s.includes('fetch failed') || s.includes('networkerror') || s.includes('network error'))
@@ -374,7 +500,7 @@ bindClick('analyzeBtn', async () => {
   statusIcon.innerHTML = '<span class="spin-icon">◌</span>';
   setStatus('analyzing', 'AI analyzing placement…', currentFile
     ? `Scanning ${currentFile.split('/').pop() || currentFile.split('\\').pop()}…`
-    : 'No file loaded — will suggest placement type');
+    : 'No file loaded, will suggest placement type');
 
   const result = await codeply.analyzeSnippet({
     code: currentCode,
@@ -421,7 +547,7 @@ bindClick('analyzeBtn', async () => {
   }
 
   const actionLabel = {
-    replace: `Replace lines ${r.startLine}–${r.endLine}`,
+    replace: `Replace lines ${r.startLine}-${r.endLine}`,
     insert_after: `Insert after line ${r.startLine}`,
     insert_before: `Insert before line ${r.startLine}`,
     append: 'Append to end of file',
@@ -439,6 +565,7 @@ bindClick('analyzeBtn', async () => {
   setStatus('ready', actionLabel, r.reason, r.confidence);
   applyBtn.disabled = false;
   applyBtn.textContent = 'Apply';
+  advancePopupTutorialAfterAnalyze();
 });
 
 // ─── Render file with highlight ────────────────────────────────────────────────
@@ -464,6 +591,8 @@ function renderFileWithHighlight(content, startLine, endLine) {
 // ─── Apply with Animation ──────────────────────────────────────────────────────
 bindClick('applyBtn', async () => {
   if (!analysisResult || applyBtn.disabled) return;
+
+  completePopupTutorial();
 
   const r = analysisResult;
 
@@ -498,7 +627,7 @@ bindClick('applyBtn', async () => {
   if (!currentFile) {
     // No file — just animate the paste in the preview
     await animateCodeInPreview(r.code, null, null);
-    setStatus('ready', 'Done!', 'No file selected — showing preview animation only');
+    setStatus('ready', 'Done!', 'No file selected, showing preview animation only');
     return;
   }
 
@@ -771,7 +900,7 @@ function initPopupUpdater() {
       install.style.display = 'block';
     } else if (stage === 'downloading') {
       title.textContent = 'Installing Update';
-      sub.textContent = 'Downloading the latest version — please keep Codeply open.';
+      sub.textContent = 'Downloading the latest version, please keep Codeply open.';
       prog.style.display = 'block';
     } else if (stage === 'downloaded') {
       title.textContent = 'Update Ready';

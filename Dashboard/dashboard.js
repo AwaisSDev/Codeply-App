@@ -193,10 +193,10 @@ async function loadBugReports() {
     <tbody>${bugs.map(b => `
       <tr>
         <td class="td-time">${relTime(b.created_at)}</td>
-        <td class="td-file">${escHtml(b.user_email || '—')}</td>
-        <td style="font-weight:600;color:var(--text)">${escHtml(b.title || '—')}</td>
+        <td class="td-file">${escHtml(b.user_email || '')}</td>
+        <td style="font-weight:600;color:var(--text)">${escHtml(b.title || '')}</td>
         <td style="max-width:300px;white-space:normal;color:var(--text2);font-size:0.8rem">${escHtml(b.description || '')}</td>
-        <td class="badge-model">${escHtml(b.app_version || '—')}</td>
+        <td class="badge-model">${escHtml(b.app_version || '')}</td>
         <td>
           <select class="bug-status" data-id="${b.id}" style="height:28px;border-radius:6px;border:1px solid var(--border-light);font-size:0.72rem;padding:0 6px">
             ${['open','in-progress','resolved','closed'].map(s => `<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
@@ -209,6 +209,45 @@ async function loadBugReports() {
       showToast('Status updated', 'success');
     });
   });
+}
+
+async function loadReferralSources() {
+  const wrap = document.getElementById('referralListWrap');
+  const breakdown = document.getElementById('referralBreakdown');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  if (breakdown) breakdown.innerHTML = '';
+  let rows = [];
+  try { rows = await window.codeply.admin.referrals(); } catch {}
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty-state"><span class="icon">📍</span>No referral data yet.</div>';
+    return;
+  }
+
+  // Breakdown chips: count per source.
+  const counts = {};
+  rows.forEach(r => {
+    const key = (r.referral_source || 'Unknown').trim() || 'Unknown';
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  if (breakdown) {
+    breakdown.innerHTML = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([source, n]) => `
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:var(--bg-soft, #f4f4f6);border:1px solid var(--border-light);font-size:0.78rem">
+          <span style="font-weight:600;color:var(--text)">${escHtml(source)}</span>
+          <span style="color:var(--text2)">${n}</span>
+        </div>`).join('');
+  }
+
+  wrap.innerHTML = `<table class="history-table">
+    <thead><tr><th>Signed up</th><th>User ID</th><th>Came from</th></tr></thead>
+    <tbody>${rows.map(r => `
+      <tr>
+        <td class="td-time">${relTime(r.created_at)}</td>
+        <td class="td-file" title="${escHtml(r.id || '')}">${escHtml((r.id || '').slice(0, 8))}</td>
+        <td style="font-weight:600;color:var(--text)">${escHtml(r.referral_source || 'Unknown')}</td>
+      </tr>`).join('')}</tbody></table>`;
 }
 
 // ─── Live refresh ──────────────────────────────────────────────────────────────
@@ -741,14 +780,14 @@ function renderWatchCard() {
     fileEl.textContent = parts.slice(-2).join('/');
     fileEl.style.color = 'var(--green)';
     dot.style.background = 'var(--green)';
-    dot.title = 'Watching — file detected';
+    dot.title = 'Watching, file detected';
   } else if (watchData.folder) {
     fileEl.textContent = 'No recent file yet';
     fileEl.style.color = 'var(--muted)';
     dot.style.background = 'var(--yellow)';
-    dot.title = 'Watching — no file yet';
+    dot.title = 'Watching, no file yet';
   } else {
-    fileEl.textContent = '—';
+    fileEl.textContent = '';
     fileEl.style.color = 'var(--muted)';
     dot.style.background = 'var(--muted)';
     dot.title = 'Not watching';
@@ -782,9 +821,9 @@ function dashHistory() {
     return (_cloudHistory || []).map(h => ({
       timestamp: h.created_at,
       tokens:    h.tokens_total || 0,
-      snippet:   h.prompt_text || '–',
-      file:      h.file_path ? h.file_path.split(/[/\\]/).pop() : '–',
-      model:     h.model || '–',
+      snippet:   h.prompt_text || '',
+      file:      h.file_path ? h.file_path.split(/[/\\]/).pop() : '',
+      model:     h.model || '',
     }));
   }
   return usage.history || [];
@@ -813,7 +852,7 @@ function renderOverview() {
   document.getElementById('statTokens').textContent   = formatNum(totals.tokens);
   document.getElementById('statRequests').textContent = totals.requests;
   const avg = totals.requests > 0 ? Math.round(totals.tokens / totals.requests) : 0;
-  document.getElementById('statAvg').textContent = avg > 0 ? formatNum(avg) : '–';
+  document.getElementById('statAvg').textContent = avg > 0 ? formatNum(avg) : '';
   document.getElementById('historyBadge').textContent = dashHistoryCount();
   renderTokenCapBar();
   renderChart(); renderRecentActivity();
@@ -920,8 +959,8 @@ function renderRecentActivity() {
   container.innerHTML = `<table class="history-table">
     <thead><tr><th>Snippet</th><th>File</th><th>Model</th><th>Tokens</th><th>Time</th></tr></thead>
     <tbody>${history.map(h => `<tr>
-      <td class="td-code">${escHtml(h.snippet || '–')}</td>
-      <td class="td-file">${escHtml(h.file || '–')}</td>
+      <td class="td-code">${escHtml(h.snippet || '')}</td>
+      <td class="td-file">${escHtml(h.file || '')}</td>
       <td><span class="badge-model">${escHtml(shortModel(h.model))}</span></td>
       <td class="td-tokens">${h.tokens || 0}</td>
       <td class="td-time">${relTime(h.timestamp)}</td>
@@ -978,7 +1017,7 @@ function renderHistoryStats() {
       </div>
       <div class="hst-stat-card">
         <div class="hst-stat-label">Avg per Request</div>
-        <div class="hst-stat-val">${avg > 0 ? formatNum(avg) : '–'}</div>
+        <div class="hst-stat-val">${avg > 0 ? formatNum(avg) : ''}</div>
       </div>
     </div>
     ${modelList.length ? `<div class="hst-model-section">
@@ -992,8 +1031,8 @@ function renderHistory() {
 
   const rows = _cloudHistory.map(h => ({
     snippet:   (h.prompt_text || '').slice(0, 80) + ((h.prompt_text || '').length > 80 ? '...' : ''),
-    file:      h.file_path ? h.file_path.split(/[/\\]/).pop() : '–',
-    model:     h.model || '–',
+    file:      h.file_path ? h.file_path.split(/[/\\]/).pop() : '',
+    model:     h.model || '',
     tokens:    h.tokens_total || 0,
     tokensIn:  h.tokens_in   || 0,
     tokensOut: h.tokens_out  || 0,
@@ -1030,7 +1069,7 @@ function renderSubscriptionPage() {
     const badge = document.getElementById('subStatusBadge');
     badge.className = isActive ? 'sub-badge-free' : 'sub-badge-locked';
     badge.innerHTML = isActive
-      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Active — ${subStatus.plan === 'pro' ? 'Pro' : 'Free'}`
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Active · ${subStatus.plan === 'pro' ? 'Pro' : 'Free'}`
       : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Subscription Required`;
 
     section.innerHTML = `<div style="padding:14px;background:var(--green-tint);border-radius:10px;border:1px solid #a8d5b5;font-size:0.83rem;color:var(--green)">
@@ -1252,9 +1291,9 @@ function populateSettings() {
 }
 // ─── Utilities ─────────────────────────────────────────────────────────────────
 function escHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function shortModel(model) { if (!model) return '–'; return model.split('/').pop() || model; }
+function shortModel(model) { if (!model) return ''; return model.split('/').pop() || model; }
 function relTime(iso) {
-  if (!iso) return '–';
+  if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000), h = Math.floor(m/60), d = Math.floor(h/24);
   if (d > 0) return `${d}d ago`;
@@ -1463,7 +1502,7 @@ function wireAllHandlers() {
       if (page === 'overview')      { renderOverview(); renderWatchCard(); }
       if (page === 'history')       { loadCloudHistoryData().then(() => renderHistory()); renderHistory(); }
       if (page === 'subscription')  renderSubscriptionPage();
-      if (page === 'admin')         loadBugReports();
+      if (page === 'admin')         { loadBugReports(); loadReferralSources(); }
       if (page === 'settings' && !hasAnyApiKeyConfigured()) {
         // No key yet — walk them straight into the key guide.
         setTimeout(() => document.getElementById('orWizardTrigger')?.click(), 300);
@@ -1493,6 +1532,7 @@ function wireAllHandlers() {
   });
 
   bindClick('refreshBugsBtn', loadBugReports);
+  bindClick('refreshReferralsBtn', loadReferralSources);
 
   bindClick('pickFolderBtn', async () => {
     const result = await codeply.pickWatchFolder();
@@ -1565,7 +1605,7 @@ function wireAllHandlers() {
       settings = { ...settings, ...updated };
       renderTokenCapBar();
       // Settings now apply live — the popup hot-reloads the key/model instantly.
-      showToast('Settings applied — no restart needed', 'success');
+      showToast('Settings applied, no restart needed', 'success');
       if (wasOnboarding && newRanking.some(m => m && m.apiKey)) {
         setTimeout(showOnboardingDoneModal, 500);
       }
@@ -1577,7 +1617,7 @@ function wireAllHandlers() {
   bindClick('restartModalClose', () => {
     const modal = document.getElementById('restartModal');
     if (modal) modal.style.display = 'none';
-    showToast('Settings saved — restart when ready', 'success');
+    showToast('Settings saved, restart when ready', 'success');
   });
 
   bindClick('restartNowBtn', async () => {

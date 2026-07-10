@@ -64,6 +64,10 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Bumps every rem-based font-size across the app (~13% larger than the
+   16px browser default), since sizes are hardcoded per-selector in rem. */
+html { font-size: 18px; }
+
 body {
   font-family: var(--sans);
   color: var(--ink);
