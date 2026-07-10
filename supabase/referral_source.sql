@@ -20,10 +20,29 @@ create policy "profiles_update_own" on public.profiles
 
 -- 4) Let an admin read every profile row (needed so the Admin page in the app
 --    can list every user's referral_source, not just their own).
+--
+--    IMPORTANT: a policy on `profiles` cannot subquery `profiles` directly —
+--    Postgres detects that as infinite recursion and every read/write on the
+--    table starts failing ("fetch failed" in the app when saving settings).
+--    A SECURITY DEFINER function breaks the recursion because it bypasses RLS
+--    internally.
+create or replace function public.is_admin(uid uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce((select is_admin from public.profiles where id = uid), false);
+$$;
+
+revoke all on function public.is_admin(uuid) from public;
+grant execute on function public.is_admin(uuid) to authenticated;
+
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
   for select to authenticated
   using (
     auth.uid() = id
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin = true)
+    or public.is_admin(auth.uid())
   );
