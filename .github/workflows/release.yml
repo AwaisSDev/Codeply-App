@@ -5,6 +5,13 @@ on:
     tags:
       - 'v*'
 
+# GitHub's modern default gives the auto-generated GITHUB_TOKEN read-only
+# access, which is what "Resource not accessible by integration" means when
+# a job tries to create a release — this grants write explicitly regardless
+# of the repo/org default.
+permissions:
+  contents: write
+
 # Each OS job only BUILDS and uploads its artifact to the workflow run — it
 # does NOT publish a GitHub release itself. Two parallel jobs each running
 # `electron-builder --publish always` for the same tag is a race: both check
@@ -77,8 +84,7 @@ jobs:
       - name: Create release with both assets
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GH_TOKEN }}
           files: |
             dist/Codeply-Setup.exe
             dist/Codeply.dmg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
