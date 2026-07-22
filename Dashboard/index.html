@@ -521,6 +521,15 @@
     }
     .sub-btn:hover { background: var(--accent-hover); box-shadow: var(--shadow-sm); }
 
+    /* ── Daily apply usage bar ── */
+    .usage-limit-wrap { margin-bottom: 20px; }
+    .usage-limit-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+    .usage-limit-label { font-size: 0.83rem; font-weight: 700; color: var(--text); }
+    .usage-limit-count { font-size: 0.78rem; font-family: var(--mono); color: var(--text2); }
+    .usage-limit-track { height: 8px; background: var(--border-light); border-radius: 5px; overflow: hidden; }
+    .usage-limit-fill { height: 100%; width: 0%; border-radius: 5px; background: var(--accent); transition: width .4s ease, background .3s ease; }
+    .usage-limit-note { font-size: 0.72rem; color: var(--muted); margin-top: 7px; }
+
     /* ── OpenRouter Setup Wizard ── */
     .or-wizard-trigger {
       display: inline-flex; align-items: center; gap: 5px;
@@ -1056,7 +1065,7 @@
       </div>
       <div style="font-size:1.15rem;font-weight:800;color:#1d2230;margin-bottom:8px;letter-spacing:-.02em;">Restart to apply</div>
       <div style="font-size:0.83rem;color:#565f72;line-height:1.6;margin-bottom:26px;">
-        Settings saved. Restart Codeply for your model changes to take effect.
+        Settings saved. Restart Codeply for your changes to take effect.
       </div>
       <div style="display:flex;gap:10px;justify-content:center">
         <button id="restartModalClose" style="
@@ -1485,6 +1494,18 @@
           </div>
           <div class="sub-title">Codeply is currently free!</div>
           <div class="sub-desc">All features are available at no cost. When paid plans launch, existing users will get first access and a discount.</div>
+
+          <div class="usage-limit-wrap" id="usageLimitWrap">
+            <div class="usage-limit-head">
+              <span class="usage-limit-label">Daily applies</span>
+              <span class="usage-limit-count" id="usageLimitCount">0 / 500</span>
+            </div>
+            <div class="usage-limit-track">
+              <div class="usage-limit-fill" id="usageLimitFill"></div>
+            </div>
+            <div class="usage-limit-note">Resets daily at midnight UTC.</div>
+          </div>
+
           <div class="sub-features">
             <div class="sub-feature">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -1492,7 +1513,7 @@
             </div>
             <div class="sub-feature">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-              All AI providers (OpenRouter, Groq)
+              Built-in AI engine, zero setup
             </div>
             <div class="sub-feature">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -1504,7 +1525,7 @@
             </div>
             <div class="sub-feature">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-              End-to-end encryption of API keys
+              Per-project response cache &amp; file history
             </div>
           </div>
           <div id="subAccountSection">
@@ -1519,46 +1540,45 @@
       <div class="page" id="page-settings">
         <div class="page-header">
           <div class="page-title">Settings</div>
-          <div class="page-subtitle">Configure AI provider and preferences</div>
+          <div class="page-subtitle">Preferences. AI is built in, nothing to configure</div>
         </div>
         <div class="settings-grid settings-grid-tut">
 
-          <!-- AI Models — left column, top -->
-          <div class="settings-card" style="grid-column:1;grid-row:1">
+          <!-- Account — left, full box -->
+          <div class="settings-card" style="grid-column:1">
             <div class="settings-card-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              AI Models
-              <div class="mr-header-actions">
-                <button id="addModelBtn" class="mr-add-btn">+ Add Model</button>
-              </div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              Account
             </div>
-
-            <div id="mrList" class="mr-list">
-              <!-- populated by dashboard.js -->
-            </div>
-
-            <div class="mr-fallback">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.07-8.77"/></svg>
-              <span id="mrFallbackNote">Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback, used if your other models fail.</span>
-            </div>
-
-            <div class="field">
-              <label class="field-label">Token Cap <span style="font-weight:400;color:var(--muted)">(0 = unlimited)</span></label>
-              <input id="s-tokenCap" class="field-input" type="number" min="0" step="1000" placeholder="e.g. 100000">
-              <div id="tokenCapBarWrap" style="margin-top:8px;display:none">
-                <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.62rem;color:var(--text2);margin-bottom:4px">
-                  <span id="tokenCapUsedLabel"></span>
-                  <span id="tokenCapPctLabel"></span>
-                </div>
-                <div style="height:5px;background:var(--border-light);border-radius:4px;overflow:hidden">
-                  <div id="tokenCapProgressBar" style="height:100%;background:var(--accent);border-radius:4px;transition:width .4s ease;width:0%"></div>
+            <div id="settingsLoggedIn">
+              <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+                <div class="user-avatar" id="settingsAvatar" style="width:44px;height:44px;font-size:1.1rem">?</div>
+                <div>
+                  <div id="settingsUserName" style="font-size:0.92rem;font-weight:700">Guest</div>
+                  <div id="settingsUserEmail" style="font-size:0.74rem;color:var(--text2);margin-top:2px">Not signed in</div>
                 </div>
               </div>
+              <div class="field">
+                <label class="field-label">Display Name</label>
+                <input id="s-name" class="field-input" type="text" placeholder="Your name">
+              </div>
+              <div class="field" style="margin-top:14px">
+                <label class="field-label">Email</label>
+                <input id="s-email" class="field-input" type="email" placeholder="you@example.com">
+              </div>
+              <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+                <button class="save-settings-btn" id="saveProfileBtn" style="width:auto;padding:0 24px">Update Profile</button>
+                <button class="danger-btn" id="signOutBtn" style="width:auto;padding:0 24px;margin-top:0">Sign Out</button>
+              </div>
             </div>
-            <button class="save-settings-btn" id="saveSettingsBtn">Save Configuration</button>
+            <div id="settingsNotLoggedIn" style="display:none;text-align:center;padding:16px 0">
+              <div style="font-size:0.85rem;color:var(--text2);margin-bottom:12px">Sign in to save your profile and sync subscription.</div>
+              <button class="save-settings-btn" id="goToLoginBtn" style="width:auto;padding:0 24px">Sign In</button>
+            </div>
           </div>
 
-          <div class="settings-card" style="grid-column:1;grid-row:2">
+          <!-- Overlay Hotkey — right, full box -->
+          <div class="settings-card" style="grid-column:2">
             <div class="settings-card-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
               Overlay Hotkey
@@ -1572,72 +1592,12 @@
               <label class="field-label">Hotkey String</label>
               <input id="s-hotkey" class="field-input" type="text" placeholder="Alt+C">
             </div>
+            <button class="save-settings-btn" id="saveSettingsBtn">Save Configuration</button>
             <div class="settings-card-title" style="margin-top:20px">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>
               Danger Zone
             </div>
             <button class="danger-btn" id="resetUsageBtn">Reset All Usage Data</button>
-          </div>
-
-          <!-- Animated OpenRouter key tutorial — right column, spans both rows -->
-          <div class="settings-card or-tut-card" style="grid-column:2;grid-row:1 / span 2">
-            <div class="settings-card-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-              Get your OpenRouter API key
-            </div>
-            <div class="or-tut-stage">
-              <div class="or-tut-browser">
-                <div class="or-tut-bar">
-                  <span class="or-tut-trafficdot" style="background:#ff5f56"></span>
-                  <span class="or-tut-trafficdot" style="background:#ffbd2e"></span>
-                  <span class="or-tut-trafficdot" style="background:#27c93f"></span>
-                  <div class="or-tut-url" id="orTutUrl">openrouter.ai</div>
-                </div>
-                <div class="or-tut-screen" id="orTutScreen"></div>
-              </div>
-              <div class="or-tut-caption" id="orTutCaption">Step 1: Open openrouter.ai</div>
-              <div class="or-tut-progress"><div class="or-tut-progress-fill" id="orTutProgress"></div></div>
-              <div class="or-tut-dots" id="orTutDots"></div>
-            </div>
-            <button class="or-tut-open-btn" id="orWizardTrigger" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-              Open step-by-step guide
-            </button>
-          </div>
-        </div>
-
-        <!-- Account card -->
-        <div class="settings-card" style="margin-bottom:24px">
-          <div class="settings-card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            Account
-          </div>
-          <div id="settingsLoggedIn">
-            <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
-              <div class="user-avatar" id="settingsAvatar" style="width:44px;height:44px;font-size:1.1rem">?</div>
-              <div>
-                <div id="settingsUserName" style="font-size:0.92rem;font-weight:700">Guest</div>
-                <div id="settingsUserEmail" style="font-size:0.74rem;color:var(--text2);margin-top:2px">Not signed in</div>
-              </div>
-            </div>
-            <div class="settings-grid" style="margin-bottom:0">
-              <div class="field">
-                <label class="field-label">Display Name</label>
-                <input id="s-name" class="field-input" type="text" placeholder="Your name">
-              </div>
-              <div class="field">
-                <label class="field-label">Email</label>
-                <input id="s-email" class="field-input" type="email" placeholder="you@example.com">
-              </div>
-            </div>
-            <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
-              <button class="save-settings-btn" id="saveProfileBtn" style="width:auto;padding:0 24px">Update Profile</button>
-              <button class="danger-btn" id="signOutBtn" style="width:auto;padding:0 24px;margin-top:0">Sign Out</button>
-            </div>
-          </div>
-          <div id="settingsNotLoggedIn" style="display:none;text-align:center;padding:16px 0">
-            <div style="font-size:0.85rem;color:var(--text2);margin-bottom:12px">Sign in to save your profile and sync subscription.</div>
-            <button class="save-settings-btn" id="goToLoginBtn" style="width:auto;padding:0 24px">Sign In</button>
           </div>
         </div>
       </div>
@@ -1695,116 +1655,6 @@
     </main>
   </div>
 
-  <!-- ── OpenRouter API Setup Wizard ── -->
-  <div class="or-wizard-overlay" id="orWizardOverlay">
-    <div class="or-wizard-card">
-      <div class="or-wizard-head">
-        <div>
-          <div class="or-wizard-title">Add your OpenRouter Key</div>
-          <div class="or-wizard-sub">Follow these steps to get your free API key</div>
-        </div>
-        <button class="or-wizard-close" id="orWizardClose">✕</button>
-      </div>
-
-      <div class="or-steps" id="orSteps">
-        <!-- Step 1 -->
-        <div class="or-step" data-step="0">
-          <div class="or-step-num">1</div>
-          <div class="or-step-body">
-            <div class="or-step-label">Visit openrouter.ai</div>
-            <div class="or-step-desc">
-              Go to <strong>openrouter.ai</strong> in your browser. It's free to sign up and gives you access to 200+ AI models.
-            </div>
-          </div>
-        </div>
-        <!-- Step 2 -->
-        <div class="or-step" data-step="1">
-          <div class="or-step-num">2</div>
-          <div class="or-step-body">
-            <div class="or-step-label">Create a free account</div>
-            <div class="or-step-desc">
-              Sign up with Google or email. No credit card required for free-tier models like Llama and Mistral.
-            </div>
-          </div>
-        </div>
-        <!-- Step 3 -->
-        <div class="or-step" data-step="2">
-          <div class="or-step-num">3</div>
-          <div class="or-step-body">
-            <div class="or-step-label">Go to Keys → Create Key</div>
-            <div class="or-step-desc">
-              In the dashboard, click <strong>Keys</strong> in the left sidebar, then hit <strong>Create Key</strong>.
-            </div>
-            <div class="or-screen">
-              <div class="or-screen-bar">
-                <div class="orb" style="background:#ff5f56"></div>
-                <div class="orb" style="background:#ffbd2e"></div>
-                <div class="orb" style="background:#27c93f"></div>
-                <span style="margin-left:6px">openrouter.ai/keys</span>
-              </div>
-              <div class="or-screen-content">
-                <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:8px">API Keys</div>
-                <div class="or-screen-btn">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Create Key
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- Step 4 -->
-        <div class="or-step" data-step="3">
-          <div class="or-step-num">4</div>
-          <div class="or-step-body">
-            <div class="or-step-label">Copy your key</div>
-            <div class="or-step-desc">
-              Your key starts with <code style="background:rgba(66,133,244,0.12);padding:1px 5px;border-radius:4px;font-size:0.78rem">sk-or-v1-...</code>. Copy it, you won't see it again!
-            </div>
-            <div class="or-screen">
-              <div class="or-screen-bar">
-                <div class="orb" style="background:#ff5f56"></div>
-                <div class="orb" style="background:#ffbd2e"></div>
-                <div class="orb" style="background:#27c93f"></div>
-                <span style="margin-left:6px">Your new key</span>
-              </div>
-              <div class="or-screen-content">
-                <div class="or-screen-row">
-                  <span class="or-key-pill">sk-or-v1-••••••••••••••••</span>
-                  <div class="or-screen-btn" style="padding:5px 12px;font-size:0.72rem">
-                    Copy
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- Step 5 -->
-        <div class="or-step" data-step="4">
-          <div class="or-step-num">5</div>
-          <div class="or-step-body">
-            <div class="or-step-label">Paste it in Codeply</div>
-            <div class="or-step-desc">
-              Come back here, paste the key into the <strong>API Key</strong> field above, and hit <strong>Save Configuration</strong>. Done! 🎉
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="or-wizard-footer">
-        <div class="or-dots" id="orDots">
-          <div class="or-dot" data-dot="0"></div>
-          <div class="or-dot" data-dot="1"></div>
-          <div class="or-dot" data-dot="2"></div>
-          <div class="or-dot" data-dot="3"></div>
-          <div class="or-dot" data-dot="4"></div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="or-back-btn" id="orBack" style="display:none">← Back</button>
-          <button class="or-next-btn" id="orNext">Next →</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
 
   <!-- Shim for browser preview -->
@@ -1812,7 +1662,7 @@
     if (!window.codeply) {
       const now = Date.now();
       window.codeply = {
-        async getSettings() { return { provider: 'openrouter', model: 'openai/gpt-4o-mini', apiKey: '', hotkey: 'Alt+C', user: { name: 'Demo', email: 'demo@codeply.online', avatar: '' } }; },
+        async getSettings() { return { hotkey: 'Alt+C', user: { name: 'Demo', email: 'demo@codeply.online', avatar: '' } }; },
         async getUsage() { return { totalTokens: 12400, totalRequests: 34, history: [
           { id:1, timestamp: new Date(now-5*60000).toISOString(), model:'openai/gpt-4o-mini', tokens:412, snippet:'def verify_token(token):', file:'auth.py' },
           { id:2, timestamp: new Date(now-40*60000).toISOString(), model:'openai/gpt-4o-mini', tokens:318, snippet:'const useDebounce = (value)', file:'hooks.ts' },
@@ -1837,7 +1687,8 @@
         },
         subscription: {
           async check() { return { allowed: true, reason: 'ok', plan: 'free' }; }
-        }
+        },
+        async getApplyLimit() { return { allowed: true, count: 128, limit: 500 }; }
       };
     }
   </script>
@@ -1854,188 +1705,6 @@
   </script>
   <script src="./dashboard.js"></script>
 
-  <script>
-    /* ── Animated OpenRouter key tutorial (auto-playing loop) ── */
-    (function() {
-      const screen   = document.getElementById('orTutScreen');
-      const urlEl    = document.getElementById('orTutUrl');
-      const capEl    = document.getElementById('orTutCaption');
-      const progEl   = document.getElementById('orTutProgress');
-      const dotsWrap = document.getElementById('orTutDots');
-      if (!screen) return;
 
-      const DURATION = 3000; // ms per scene
-
-      const PURPLE = '#6d5ef0';
-      const scenes = [
-        {
-          // OpenRouter homepage (light)
-          url: 'openrouter.ai',
-          caption: 'Step 1: Click “Get API Key”',
-          html: `
-            <div style="text-align:center;padding-top:8px">
-              <div style="font-size:21px;font-weight:800;color:#1d2230;letter-spacing:-.02em;line-height:1.15">The Unified<br>Interface For LLMs</div>
-              <div style="font-size:12px;color:#8b93a4;margin:9px 0 16px">Better prices, better uptime, no subscriptions.</div>
-              <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:9px;padding:9px 20px;font-size:14px;font-weight:700">Get API Key</span>
-              <span style="display:inline-block;margin-left:8px;border:1px solid rgba(0,0,0,.14);color:#3a4150;border-radius:9px;padding:9px 16px;font-size:14px;font-weight:600">Explore Models ✦</span>
-            </div>
-            <div class="or-sc-cursor" style="left:calc(50% - 38px);top:128px"></div>`
-        },
-        {
-          // API Keys page header with the purple "+ New Key" button
-          url: 'openrouter.ai/settings/keys',
-          caption: 'Step 2: Open API Keys → “+ New Key”',
-          html: `
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
-              <div>
-                <div style="font-size:19px;font-weight:800;color:#1d2230">API Keys</div>
-                <div style="font-size:12px;color:#8b93a4;margin-top:4px">Create and manage your API keys.</div>
-              </div>
-              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:8px;padding:7px 13px;font-size:13px;font-weight:700;white-space:nowrap">+ New Key</span>
-            </div>
-            <div style="margin-top:16px;border-top:1px solid rgba(0,0,0,.08)"></div>
-            <div style="margin-top:16px;height:9px;width:88%;background:#eef1f6;border-radius:5px"></div>
-            <div style="margin-top:9px;height:9px;width:64%;background:#eef1f6;border-radius:5px"></div>
-            <div class="or-sc-cursor" style="right:30px;top:26px"></div>`
-        },
-        {
-          // Create-key modal: matches the real dialog fields
-          url: 'openrouter.ai/settings/keys',
-          caption: 'Step 3: Name it, then click “Create”',
-          html: `
-            <div style="background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:11px;padding:13px;box-shadow:0 14px 36px rgba(0,0,0,.14)">
-              <div style="font-size:12px;color:#3a4150;font-weight:600;margin-bottom:4px">Name</div>
-              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:12px;color:#9aa1ae;margin-bottom:10px">e.g. "Chatbot Key"</div>
-              <div style="font-size:12px;color:#3a4150;font-weight:600;margin-bottom:4px">Credit limit (optional)</div>
-              <div style="background:#f4f6fb;border:1px solid rgba(0,0,0,.1);border-radius:6px;padding:7px 9px;font-size:12px;color:#9aa1ae;margin-bottom:12px">Leave blank for unlimited</div>
-              <div style="text-align:right">
-                <span class="or-sc-pulse" style="display:inline-block;background:${PURPLE};color:#fff;border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700">Create</span>
-              </div>
-            </div>
-            <div class="or-sc-cursor" style="right:34px;bottom:20px"></div>`
-        },
-        {
-          // Key reveal + copy
-          url: 'openrouter.ai/settings/keys',
-          caption: 'Step 4: Copy your sk-or-v1 key',
-          html: `
-            <div style="font-size:15px;font-weight:700;color:#1d2230;margin-bottom:11px">Your API key</div>
-            <div style="display:flex;align-items:center;gap:8px;background:#f7f9fd;border:1px solid rgba(0,0,0,.1);border-radius:8px;padding:10px 11px">
-              <span style="flex:1;font-family:var(--mono);font-size:13px;color:#6d5ef0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sk-or-v1-••••••••••••••••</span>
-              <span class="or-sc-pulse" style="background:${PURPLE};color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700">Copy</span>
-            </div>
-            <div style="font-size:11px;color:#8b93a4;margin-top:10px">⚠ You won't be able to see it again, copy it now.</div>
-            <div class="or-sc-cursor" style="right:30px;top:70px"></div>`
-        },
-        {
-          // Paste into Codeply (light card to contrast with the dark OpenRouter scenes)
-          url: 'Codeply › Settings',
-          caption: 'Step 5: Paste it into Codeply & Save',
-          html: `
-            <div style="background:#fff;border-radius:10px;padding:12px">
-              <div style="font-size:13px;font-weight:800;color:#1d2230;margin-bottom:9px">AI Models</div>
-              <div style="display:flex;align-items:center;gap:7px;border:1.5px solid #4285F4;border-radius:8px;padding:7px 9px;box-shadow:0 0 0 3px rgba(66,133,244,.14)">
-                <span style="font-size:10px;color:#8b93a4">OpenRouter</span>
-                <span style="flex:1;font-family:var(--mono);font-size:12px;color:#1a6ff0">sk-or-v1-a1b2c3d4e5f6</span>
-              </div>
-              <div style="margin-top:11px;text-align:center">
-                <span style="display:inline-flex;align-items:center;gap:6px;background:#4285F4;color:#fff;border-radius:7px;padding:7px 15px;font-size:12px;font-weight:700">
-                  <span style="width:14px;height:14px;border-radius:50%;background:#1f8f43;display:inline-flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
-                  Saved
-                </span>
-              </div>
-            </div>`
-        },
-      ];
-
-      // Build dots
-      dotsWrap.innerHTML = scenes.map((_, i) => `<span class="d" data-i="${i}"></span>`).join('');
-      const dots = Array.from(dotsWrap.querySelectorAll('.d'));
-
-      let i = 0;
-      let timer = null;
-
-      function paint(n) {
-        const sc = scenes[n];
-        urlEl.textContent = sc.url;
-        capEl.textContent = sc.caption;
-        screen.innerHTML = `<div class="or-tut-scene">${sc.html}</div>`;
-        dots.forEach((d, k) => {
-          d.classList.toggle('active', k === n);
-          d.classList.toggle('done', k < n);
-        });
-        // Restart the progress bar for this scene
-        progEl.style.transition = 'none';
-        progEl.style.width = '0%';
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          progEl.style.transition = `width ${DURATION}ms linear`;
-          progEl.style.width = '100%';
-        }));
-      }
-
-      function tick() { i = (i + 1) % scenes.length; paint(i); }
-
-      function start() {
-        if (timer) clearInterval(timer);
-        paint(i);
-        timer = setInterval(tick, DURATION);
-      }
-
-      // Pause the loop while the window is hidden to save cycles; resume on return.
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) { clearInterval(timer); timer = null; }
-        else if (!timer) start();
-      });
-
-      start();
-    })();
-  </script>
-
-  <script>
-    /* ── OpenRouter Wizard ── */
-    (function() {
-      const TOTAL = 5;
-      let current = 0;
-      const overlay  = document.getElementById('orWizardOverlay');
-      const steps    = Array.from(document.querySelectorAll('.or-step'));
-      const dots     = Array.from(document.querySelectorAll('.or-dot'));
-      const nextBtn  = document.getElementById('orNext');
-      const backBtn  = document.getElementById('orBack');
-      const closeBtn = document.getElementById('orWizardClose');
-      const trigger  = document.getElementById('orWizardTrigger');
-
-      function goTo(n) {
-        steps.forEach((s, i) => {
-          s.classList.toggle('active', i === n);
-          s.classList.toggle('done', i < n);
-        });
-        dots.forEach((d, i) => {
-          d.classList.toggle('active', i === n);
-          d.classList.toggle('done', i < n);
-        });
-        backBtn.style.display = n === 0 ? 'none' : '';
-        nextBtn.textContent = n === TOTAL - 1 ? 'Got it ✓' : 'Next →';
-        current = n;
-      }
-
-      function open() { overlay.classList.add('open'); goTo(0); }
-      function close() { overlay.classList.remove('open'); }
-
-      trigger && trigger.addEventListener('click', open);
-      closeBtn && closeBtn.addEventListener('click', close);
-      overlay && overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-      nextBtn && nextBtn.addEventListener('click', () => {
-        if (current < TOTAL - 1) goTo(current + 1);
-        else close();
-      });
-      backBtn && backBtn.addEventListener('click', () => {
-        if (current > 0) goTo(current - 1);
-      });
-
-      // Init first step active
-      goTo(0);
-    })();
-  </script>
 </body>
 </html>

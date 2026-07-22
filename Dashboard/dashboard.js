@@ -356,8 +356,7 @@ async function completeAuthSuccess(user) {
     hideAuthComplete();
     proceedAfterLogin();
     await refreshSubscription();
-    // Re-fetch settings from main process — it has already loaded this user's
-    // cloud API key by the time we get here, so the settings page must refresh.
+    // Re-fetch settings from the main process so the settings page is fresh.
     settings = await window.codeply.getSettings();
     populateSettings();
     renderSubscriptionPage();
@@ -474,25 +473,15 @@ function showLogin() {
   requestAnimationFrame(() => { lp.style.transition = 'opacity .25s'; lp.style.opacity = '1'; });
 }
 
-// ─── First-run onboarding (referral survey → spotlight tour → Alt+C callout) ────
-function hasAnyApiKeyConfigured() {
-  if (settings.apiKey) return true;
-  return (settings.modelRanking || []).some(m => m && m.apiKey);
-}
-
-// Called wherever the login/guest step used to just call hideLogin() directly.
-// Guarded so the whole onboarding sequence can only ever be kicked off once per
-// loaded window — the dashboard window is hidden/shown (not reloaded) while the
-// app runs in the background, so this must not re-fire on every re-open.
-// The gate is simply "no API key configured yet" — no sticky "done forever"
-// flag, because settings are stored per machine, not per account: a stuck flag
-// would hide onboarding for a brand new account that still has no key.
+// ─── First-run onboarding (referral survey) ─────────────────────────────────────
+// The AI engine is built in now — there is no API-key step. The only first-run
+// question left is the referral survey, gated on whether it was already answered.
 let onboardingSequenceStarted = false;
 function proceedAfterLogin() {
   if (onboardingSequenceStarted) { hideLogin(); return; }
   onboardingSequenceStarted = true;
 
-  if (hasAnyApiKeyConfigured()) {
+  if (settings.referralSource) {
     hideLogin();
     return;
   }
@@ -517,7 +506,6 @@ function finishReferralPage(value) {
   codeply.saveSettings({ referralSource: value }).catch(() => {});
 
   hideLogin();
-  setTimeout(startSpotlightTour, 400);
 }
 
 function initReferralSurvey() {
@@ -551,89 +539,6 @@ function initReferralSurvey() {
     const value = selected === 'Other' ? (otherInput.value.trim() || 'Other') : selected;
     finishReferralPage(value);
   });
-}
-
-// Generic spotlight: dims everything except a glowing hole around `target`.
-// Dismisses itself the moment the user clicks the real element underneath.
-function startSpotlight(target, titleHtml, bodyHtml) {
-  const overlay = document.getElementById('onboardingSpotlight');
-  if (!target || !overlay) return () => {};
-
-  function render() {
-    const r = target.getBoundingClientRect();
-    const pad = 8;
-    const x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
-    const calloutLeft = Math.min(x + w + 16, window.innerWidth - 276);
-    overlay.innerHTML = `
-      <div class="spot-mask" style="left:0;top:0;right:0;height:${Math.max(0, y)}px"></div>
-      <div class="spot-mask" style="left:0;top:${y + h}px;right:0;bottom:0"></div>
-      <div class="spot-mask" style="left:0;top:${y}px;width:${Math.max(0, x)}px;height:${h}px"></div>
-      <div class="spot-mask" style="left:${x + w}px;top:${y}px;right:0;height:${h}px"></div>
-      <div class="spot-ring" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>
-      <div class="spot-callout" style="left:${Math.max(16, calloutLeft)}px;top:${y}px">
-        <strong>${titleHtml}</strong>
-        ${bodyHtml}
-      </div>
-    `;
-  }
-
-  render();
-  overlay.style.display = 'block';
-  window.addEventListener('resize', render);
-
-  function stop() {
-    overlay.style.display = 'none';
-    overlay.innerHTML = '';
-    window.removeEventListener('resize', render);
-    target.removeEventListener('click', stop);
-  }
-  target.addEventListener('click', stop, { once: true });
-  return stop;
-}
-
-// Step 1: point at the Settings nav item.
-function startSpotlightTour() {
-  const target = document.querySelector('.nav-item[data-page="settings"]');
-  startSpotlight(target, 'Add your AI key',
-    `Click <strong style="display:inline">Settings</strong> to connect an API key. That's all Codeply needs to start working.`);
-}
-
-// Step 2: point at "+ Add Model", shown once the key-getting wizard is dismissed.
-let addModelSpotlightShown = false;
-function maybeSpotlightAddModel() {
-  if (hasAnyApiKeyConfigured() || addModelSpotlightShown) return;
-  if (!document.getElementById('page-settings')?.classList.contains('active')) return;
-  const target = document.getElementById('addModelBtn');
-  if (!target) return;
-  addModelSpotlightShown = true;
-  startSpotlight(target, 'Add a model',
-    `Click <strong style="display:inline">+ Add Model</strong> and paste in the key you just copied.`);
-}
-
-// Step 3 + 4: once a model row exists, walk the user through its name field
-// then its key field. Chained off the actual click that creates the row, so
-// it fires whether that click came from the real button or the spotlight hole.
-let modelFieldSpotlightShown = false;
-function chainOnboardingModelSpotlights(row) {
-  if (hasAnyApiKeyConfigured() || modelFieldSpotlightShown || !row) return;
-  modelFieldSpotlightShown = true;
-  setTimeout(() => {
-    const nameInp = row.querySelector('.mr-model-inp');
-    const keyInp  = row.querySelector('.mr-key-inp');
-    if (!nameInp || !keyInp) return;
-    startSpotlight(nameInp, 'Fast and free model, picked for you',
-      `We filled in <strong style="display:inline">${DEFAULT_FREE_MODEL}</strong>, a fast, free model. Leave it as is, or change it, then click the key field.`);
-    nameInp.addEventListener('click', () => {
-      startSpotlight(keyInp, 'Paste your key here',
-        `Paste the API key you copied, then click the checkmark to save.`);
-    }, { once: true });
-  }, 150);
-}
-
-// Shown right after the user saves their first API key.
-function showOnboardingDoneModal() {
-  const modal = document.getElementById('onboardingDoneModal');
-  if (modal) modal.style.display = 'flex';
 }
 
 // ─── 6-digit code (OTP) step ────────────────────────────────────────────────────
@@ -957,11 +862,10 @@ function renderRecentActivity() {
     return;
   }
   container.innerHTML = `<table class="history-table">
-    <thead><tr><th>Snippet</th><th>File</th><th>Model</th><th>Tokens</th><th>Time</th></tr></thead>
+    <thead><tr><th>Snippet</th><th>File</th><th>Tokens</th><th>Time</th></tr></thead>
     <tbody>${history.map(h => `<tr>
       <td class="td-code">${escHtml(h.snippet || '')}</td>
       <td class="td-file">${escHtml(h.file || '')}</td>
-      <td><span class="badge-model">${escHtml(shortModel(h.model))}</span></td>
       <td class="td-tokens">${h.tokens || 0}</td>
       <td class="td-time">${relTime(h.timestamp)}</td>
     </tr>`).join('')}</tbody></table>`;
@@ -985,25 +889,8 @@ function renderHistoryStats() {
   const wrap = document.getElementById('historyStatsWrap');
   if (!wrap) return;
 
-  const { totalTokens, totalRequests, byModel } = _cloudStats;
+  const { totalTokens, totalRequests } = _cloudStats;
   const avg = totalRequests > 0 ? Math.round(totalTokens / totalRequests) : 0;
-
-  // Sort models by token usage
-  const modelList = Object.entries(byModel)
-    .sort((a, b) => b[1].tokens - a[1].tokens)
-    .slice(0, 5);
-  const maxT = modelList[0]?.[1]?.tokens || 1;
-
-  const modelBars = modelList.map(([name, info]) => {
-    const pct = Math.round((info.tokens / maxT) * 100);
-    const short = name.split('/').pop() || name;
-    return `
-    <div class="hst-model-row">
-      <span class="hst-model-name" title="${escHtml(name)}">${escHtml(short)}</span>
-      <div class="hst-bar-track"><div class="hst-bar-fill" style="width:${pct}%"></div></div>
-      <span class="hst-model-stat">${formatNum(info.tokens)} tok · ${info.requests} req</span>
-    </div>`;
-  }).join('');
 
   wrap.innerHTML = `
     <div class="hst-top-stats">
@@ -1019,11 +906,7 @@ function renderHistoryStats() {
         <div class="hst-stat-label">Avg per Request</div>
         <div class="hst-stat-val">${avg > 0 ? formatNum(avg) : ''}</div>
       </div>
-    </div>
-    ${modelList.length ? `<div class="hst-model-section">
-      <div class="hst-section-label">Tokens by model</div>
-      ${modelBars}
-    </div>` : ''}`;
+    </div>`;
 }
 
 function renderHistory() {
@@ -1051,11 +934,10 @@ function renderHistory() {
   container.innerHTML = `
     <div class="hst-table-header"><span class="hst-cloud-badge">☁ Cloud · ${rows.length} entries</span></div>
     <table class="history-table">
-      <thead><tr><th>Prompt</th><th>File</th><th>Model</th><th>Tokens</th><th>Time</th></tr></thead>
+      <thead><tr><th>Prompt</th><th>File</th><th>Tokens</th><th>Time</th></tr></thead>
       <tbody>${rows.map(h => `<tr>
         <td class="td-code">${escHtml(h.snippet)}</td>
         <td class="td-file">${escHtml(h.file)}</td>
-        <td><span class="badge-model">${escHtml(shortModel(h.model))}</span></td>
         <td class="td-tokens">${formatNum(h.tokens)}</td>
         <td class="td-time">${relTime(h.timestamp)}</td>
       </tr>`).join('')}</tbody>
@@ -1080,218 +962,32 @@ function renderSubscriptionPage() {
       Sign in to sync your subscription status and unlock all features.
     </div>`;
   }
+  renderUsageLimitBar();
+}
+
+// Daily apply usage (500/day cap) — same count main.js enforces against,
+// shown read-only here. Works for guests too (local counter fallback).
+async function renderUsageLimitBar() {
+  const countEl = document.getElementById('usageLimitCount');
+  const fillEl = document.getElementById('usageLimitFill');
+  if (!countEl || !fillEl) return;
+  try {
+    const limit = await window.codeply.getApplyLimit();
+    const count = limit?.count || 0;
+    const cap = limit?.limit || 500;
+    const pct = Math.min(100, (count / cap) * 100);
+    countEl.textContent = `${formatNum(count)} / ${formatNum(cap)}`;
+    fillEl.style.width = pct + '%';
+    fillEl.style.background = pct >= 100 ? 'var(--red)' : pct >= 80 ? 'var(--yellow)' : 'var(--accent)';
+  } catch (e) { /* leave the bar at its zero default on failure */ }
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
-const DASH_PROVIDER_MODELS = {
-  openrouter: ['openai/gpt-4o-mini','openai/gpt-4o','anthropic/claude-3.5-sonnet','anthropic/claude-3.5-haiku','google/gemini-flash-1.5','deepseek/deepseek-r1','x-ai/grok-2-1212','meta-llama/llama-3.1-70b-instruct','mistralai/mistral-large','qwen/qwen-2.5-72b-instruct'],
-  openai:     ['gpt-4o-mini','gpt-4o','gpt-4-turbo','gpt-4','gpt-3.5-turbo','o1-mini','o1-preview','o3-mini','o4-mini','gpt-4.1-mini'],
-  anthropic:  ['claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','claude-3-5-sonnet-20240620','claude-3-opus-20240229','claude-3-haiku-20240307','claude-3-sonnet-20240229','claude-opus-4-5','claude-sonnet-4-5','claude-haiku-4-5-20251001','claude-2.1'],
-  google:     ['gemini-2.0-flash','gemini-2.0-flash-lite','gemini-2.0-pro-exp','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-1.5-flash-8b','gemini-exp-1206','gemini-1.0-pro','gemma-3-27b-it','gemma-3-12b-it'],
-  grok:       ['grok-3','grok-3-mini','grok-3-fast','grok-3-mini-fast','grok-2-1212','grok-2-vision-1212','grok-2-mini','grok-beta','grok-vision-beta','grok-1'],
-  groq:       ['llama-3.3-70b-versatile','llama-3.1-70b-versatile','llama-3.1-8b-instant','llama-3.2-90b-vision-preview','llama-3.2-11b-vision-preview','llama3-70b-8192','mixtral-8x7b-32768','gemma2-9b-it','deepseek-r1-distill-llama-70b','llama3-8b-8192'],
-  kimi:       ['moonshot-v1-128k','moonshot-v1-32k','moonshot-v1-8k','moonshot-v1-auto','kimi-latest','kimi-k1.5','moonshot-v2','kimi-vl-a3b-thinking','moonshot-v1-128k-latest','moonshot-v1-128k-vision-preview'],
-  deepseek:   ['deepseek-chat','deepseek-reasoner','deepseek-coder-v2','deepseek-v3','deepseek-r1','deepseek-r1-zero','deepseek-v2.5','deepseek-v2','deepseek-coder','deepseek-r1-lite-preview'],
-  minimax:    ['MiniMax-Text-01','minimax-01','MiniMax-VL-01','abab6.5s-chat','abab6.5-chat','abab6.5t-chat','abab6.5g-chat','abab6-chat','abab5.5s-chat','abab5.5-chat'],
-  'ollama-cloud': ['deepseek-v3.1:671b-cloud','qwen3-coder:480b-cloud','gpt-oss:120b-cloud','gpt-oss:20b-cloud','kimi-k2:1t-cloud','llama4:scout-cloud','gemma3:27b-cloud','qwen3:32b-cloud','phi4:14b-cloud','mistral:7b-cloud'],
-};
-
-function dashPopulateModelSel(provider, currentModel) {
-  const sel = document.getElementById('s-modelSel');
-  const customWrap = document.getElementById('s-customModelWrap');
-  if (!sel) return;
-  const list = DASH_PROVIDER_MODELS[provider] || [];
-  sel.innerHTML = list.map(m => {
-    const label = m.includes('/') ? m.split('/').pop() : m;
-    return `<option value="${m}">${label}</option>`;
-  }).join('') + `<option value="__custom__">Custom…</option>`;
-  // Try to match saved model
-  if (currentModel && sel.querySelector(`option[value="${currentModel}"]`)) {
-    sel.value = currentModel;
-  } else if (currentModel) {
-    sel.value = '__custom__';
-    const ci = document.getElementById('s-modelCustom');
-    if (ci) ci.value = currentModel;
-  }
-  if (customWrap) customWrap.style.display = sel.value === '__custom__' ? 'block' : 'none';
-  // keep hidden s-model in sync
-  const hidden = document.getElementById('s-model');
-  if (hidden) hidden.value = sel.value === '__custom__' ? (document.getElementById('s-modelCustom')?.value || '') : sel.value;
-}
-
-// ─── Model Ranking UI ─────────────────────────────────────────────────────────
-
-// Suggested default: fast and free, so a brand new model row already works out of the box.
-const DEFAULT_FREE_MODEL = 'poolside/laguna-xs-2.1:free';
-
-const MR_PROVIDER_PLACEHOLDER = {
-  openrouter: 'e.g. google/gemini-2.5-flash',
-  openai:     'e.g. gpt-4o',
-  groq:       'e.g. llama-3.3-70b-versatile',
-  xai:        'e.g. grok-2',
-  grok:       'e.g. grok-2',
-  deepseek:   'e.g. deepseek-chat',
-  kimi:       'e.g. moonshot-v1-32k',
-  google:     'e.g. gemini-2.0-flash',
-  anthropic:  'e.g. claude-sonnet-4-6',
-  ollama:           'e.g. llama3.1  (must be pulled locally)',
-  'ollama-cloud':   'e.g. deepseek-v3.1:671b-cloud',
-  custom:     'model id',
-};
-
-
-function mrMakeRow(entry, idx) {
-  const id = entry.id || `mr-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-  const enabled = entry.enabled !== false;
-  const prov = entry.provider || 'openrouter';
-  const placeholder = MR_PROVIDER_PLACEHOLDER[prov] || 'model id';
-
-  const div = document.createElement('div');
-  div.className = 'mr-item';
-  div.dataset.id = id;
-  div.innerHTML = `
-    <select class="mr-provider-sel">
-      <option value="openrouter">OpenRouter</option>
-      <option value="openai">OpenAI</option>
-      <option value="groq">Groq</option>
-      <option value="xai">xAI (Grok)</option>
-      <option value="deepseek">DeepSeek</option>
-      <option value="kimi">Kimi</option>
-      <option value="google">Google</option>
-      <option value="anthropic">Anthropic</option>
-      <option value="ollama">Ollama (local)</option>
-      <option value="ollama-cloud">Ollama (cloud)</option>
-      <option value="custom">Custom…</option>
-    </select>
-    <input class="mr-model-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem"
-           type="text" placeholder="${placeholder}" value="${escHtml(entry.modelId || '')}">
-    <input class="mr-url-inp field-input" style="height:32px;padding:0 10px;font-size:0.72rem;width:180px;flex-shrink:0;display:none"
-           type="text" placeholder="Custom endpoint URL" value="${escHtml(entry.customUrl || '')}">
-    <input class="mr-key-inp field-input" style="height:32px;padding:0 10px;font-size:0.79rem;width:148px;flex-shrink:0"
-           type="password" placeholder="API Key" autocomplete="off">
-    <button class="mr-default${entry.isDefault ? ' on' : ''}" title="${entry.isDefault ? 'Default fallback, used if other models fail' : 'Set as default fallback'}">★</button>
-    <button class="mr-toggle${enabled ? '' : ' off'}" title="${enabled ? 'Enabled, click to disable' : 'Disabled, click to enable'}">${enabled ? '✓' : '○'}</button>
-    <button class="mr-delete" title="Remove model">✕</button>
-  `;
-
-  // Set password value via DOM (browsers block setting it through innerHTML/attributes)
-  div.querySelector('.mr-key-inp').value = entry.apiKey || '';
-
-  const provSel = div.querySelector('.mr-provider-sel');
-  provSel.value = prov;
-  // Ollama (local) is keyless — grey out the key field.
-  // Ollama (cloud) is a standard keyed provider (key from ollama.com/settings/keys).
-  // Custom shows the URL field.
-  const applyProviderUi = () => {
-    const p = provSel.value;
-    div.querySelector('.mr-model-inp').placeholder = MR_PROVIDER_PLACEHOLDER[p] || 'model id';
-    const keyInp = div.querySelector('.mr-key-inp');
-    const urlInp = div.querySelector('.mr-url-inp');
-    // URL field: only visible for custom provider
-    if (urlInp) {
-      urlInp.style.display = p === 'custom' ? '' : 'none';
-    }
-    if (p === 'ollama') {
-      keyInp.value = '';
-      keyInp.placeholder = 'No key needed';
-      keyInp.disabled = true;
-      keyInp.style.opacity = '0.5';
-    } else if (p === 'ollama-cloud') {
-      keyInp.placeholder = 'Ollama API Key';
-      keyInp.disabled = false;
-      keyInp.style.opacity = '';
-    } else {
-      keyInp.placeholder = 'API Key';
-      keyInp.disabled = false;
-      keyInp.style.opacity = '';
-    }
-  };
-  provSel.addEventListener('change', applyProviderUi);
-  applyProviderUi();
-
-  div.querySelector('.mr-toggle').addEventListener('click', e => {
-    const btn = e.currentTarget;
-    const on = btn.classList.toggle('off');  // toggles off, returns new state
-    btn.textContent = on ? '○' : '✓';
-    btn.title = on ? 'Disabled, click to enable' : 'Enabled, click to disable';
-  });
-
-  // Default model = radio behavior: only one row can be the default fallback.
-  div.querySelector('.mr-default').addEventListener('click', e => {
-    const btn = e.currentTarget;
-    const turningOn = !btn.classList.contains('on');
-    document.querySelectorAll('#mrList .mr-default.on').forEach(b => {
-      b.classList.remove('on');
-      b.title = 'Set as default fallback';
-    });
-    if (turningOn) {
-      btn.classList.add('on');
-      btn.title = 'Default fallback, used if other models fail';
-    }
-    mrUpdateFallbackNote();
-  });
-
-  div.querySelector('.mr-delete').addEventListener('click', () => {
-    div.remove();
-    if (!document.querySelector('#mrList .mr-item')) {
-      document.getElementById('mrList').innerHTML =
-        '<div class="mr-empty">No models yet. Click <strong>+ Add Model</strong> to get started.</div>';
-    }
-    mrUpdateFallbackNote();
-  });
-
-  return div;
-}
-
-function renderModelRanking(models = []) {
-  const list = document.getElementById('mrList');
-  if (!list) return;
-  list.innerHTML = '';
-  if (!models.length) {
-    list.innerHTML = '<div class="mr-empty">No models yet. Click <strong>+ Add Model</strong> to get started.</div>';
-    return;
-  }
-  models.forEach((m, i) => list.appendChild(mrMakeRow(m, i)));
-  mrUpdateFallbackNote();
-}
-
-// Show which model is the current default fallback (or prompt to pick one).
-function mrUpdateFallbackNote() {
-  const note = document.getElementById('mrFallbackNote');
-  if (!note) return;
-  const defRow = document.querySelector('#mrList .mr-default.on');
-  const model = defRow?.closest('.mr-item')?.querySelector('.mr-model-inp')?.value?.trim();
-  if (model) {
-    note.innerHTML = `Default fallback: <strong style="color:var(--text);margin:0 3px">${escHtml(model)}</strong>, used if your other models fail.`;
-  } else {
-    note.innerHTML = `Tap the <strong style="color:#E38A00;margin:0 3px">★</strong> on a model to make it the default fallback, used if your other models fail.`;
-  }
-}
-
-function getModelRankingData() {
-  const list = document.getElementById('mrList');
-  if (!list) return [];
-  return [...list.querySelectorAll('.mr-item')].map(item => ({
-    id:        item.dataset.id,
-    provider:  item.querySelector('.mr-provider-sel')?.value || 'openrouter',
-    modelId:   item.querySelector('.mr-model-inp')?.value?.trim() || '',
-    apiKey:    item.querySelector('.mr-key-inp')?.value || '',
-    customUrl: item.querySelector('.mr-url-inp')?.value?.trim() || '',
-    enabled:   !item.querySelector('.mr-toggle')?.classList.contains('off'),
-    isDefault: item.querySelector('.mr-default')?.classList.contains('on') || false,
-  })).filter(m => m.modelId);
-}
-
 function populateSettings() {
   if (settings.hotkey) { const el = document.getElementById('s-hotkey'); if (el) el.value = settings.hotkey; }
-  const capEl = document.getElementById('s-tokenCap');
-  if (capEl) capEl.value = settings.tokenCap || 0;
-  renderTokenCapBar();
-  renderModelRanking(settings.modelRanking || []);
 }
 // ─── Utilities ─────────────────────────────────────────────────────────────────
 function escHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function shortModel(model) { if (!model) return ''; return model.split('/').pop() || model; }
 function relTime(iso) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
@@ -1317,19 +1013,6 @@ function wireAllHandlers() {
   bindClick('onboardingDoneBtn', () => {
     const modal = document.getElementById('onboardingDoneModal');
     if (modal) modal.style.display = 'none';
-  });
-
-  // The API-key wizard has its own open/close logic (inline script at the bottom
-  // of index.html) — piggyback on its close/finish clicks to chain the next
-  // onboarding step without touching that code.
-  ['orWizardClose', 'orNext'].forEach(id => {
-    document.getElementById(id)?.addEventListener('click', () => {
-      setTimeout(() => {
-        if (!document.getElementById('orWizardOverlay')?.classList.contains('open')) {
-          maybeSpotlightAddModel();
-        }
-      }, 50);
-    });
   });
 
   bindClick('paywallSignout', async () => {
@@ -1459,10 +1142,6 @@ function wireAllHandlers() {
   bindClick('signOutBtn', async () => {
     await codeply.auth.signOut();
     currentUser = null;
-    // Clear the API key field immediately so it doesn't linger for the next login
-    settings.apiKey = '';
-    const apiKeyEl = document.getElementById('s-apiKey');
-    if (apiKeyEl) apiKeyEl.value = '';
     resetAccountData();
     updateUserUI();
     renderSubscriptionPage();
@@ -1503,10 +1182,6 @@ function wireAllHandlers() {
       if (page === 'history')       { loadCloudHistoryData().then(() => renderHistory()); renderHistory(); }
       if (page === 'subscription')  renderSubscriptionPage();
       if (page === 'admin')         { loadBugReports(); loadReferralSources(); }
-      if (page === 'settings' && !hasAnyApiKeyConfigured()) {
-        // No key yet — walk them straight into the key guide.
-        setTimeout(() => document.getElementById('orWizardTrigger')?.click(), 300);
-      }
     });
   });
 
@@ -1552,63 +1227,20 @@ function wireAllHandlers() {
     showToast('History cleared', 'success');
   });
 
-  document.getElementById('s-provider')?.addEventListener('change', e => {
-    const isCustomProv = e.target.value === 'custom';
-    const cw = document.getElementById('s-customProviderWrap');
-    if (cw) cw.style.display = isCustomProv ? 'block' : 'none';
-    dashPopulateModelSel(e.target.value, null);
-  });
-
-  document.getElementById('s-modelSel')?.addEventListener('change', e => {
-    const isCustom = e.target.value === '__custom__';
-    const cw = document.getElementById('s-customModelWrap');
-    if (cw) cw.style.display = isCustom ? 'block' : 'none';
-    const hidden = document.getElementById('s-model');
-    if (hidden && !isCustom) hidden.value = e.target.value;
-  });
-
-  document.getElementById('s-modelCustom')?.addEventListener('input', e => {
-    const hidden = document.getElementById('s-model');
-    if (hidden) hidden.value = e.target.value;
-  });
-
-  bindClick('addModelBtn', () => {
-    const list = document.getElementById('mrList');
-    if (!list) return;
-    list.querySelector('.mr-empty')?.remove();
-    const idx = list.querySelectorAll('.mr-item').length;
-    const row = mrMakeRow({ provider: 'openrouter', modelId: DEFAULT_FREE_MODEL, apiKey: '', enabled: true }, idx);
-    list.appendChild(row);
-    chainOnboardingModelSpotlights(row);
-  });
-
   bindClick('saveSettingsBtn', async () => {
-    const newHotkey   = document.getElementById('s-hotkey')?.value || '';
-    const newTokenCap = parseInt(document.getElementById('s-tokenCap')?.value || '0', 10) || 0;
-    const newRanking  = getModelRankingData();
-    const wasOnboarding = !hasAnyApiKeyConfigured();
-
-    const updated = {
-      hotkey:       newHotkey,
-      tokenCap:     newTokenCap,
-      modelRanking: newRanking,
-    };
+    const newHotkey = document.getElementById('s-hotkey')?.value || '';
+    const updated = { hotkey: newHotkey };
     const btn = document.getElementById('saveSettingsBtn');
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       const result = await codeply.saveSettings(updated);
       if (result && result.success === false) {
-        showToast(result.error || 'Cloud sync failed', 'error');
+        showToast(result.error || 'Save failed', 'error');
         return;
       }
       settings = { ...settings, ...updated };
-      renderTokenCapBar();
-      // Settings now apply live — the popup hot-reloads the key/model instantly.
       showToast('Settings applied, no restart needed', 'success');
-      if (wasOnboarding && newRanking.some(m => m && m.apiKey)) {
-        setTimeout(showOnboardingDoneModal, 500);
-      }
     } finally {
       btn.disabled = false; btn.textContent = orig;
     }

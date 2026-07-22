@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('codeply', {
   minimize() { return ipcRenderer.invoke('popup:minimize'); },
   close() { return ipcRenderer.invoke('popup:close'); },
   refreshSnippet() { ipcRenderer.send('refresh-clipboard'); },
+  readClipboard() { return ipcRenderer.invoke('clipboard:read'); },
   openDashboard() { return ipcRenderer.invoke('dashboard:open'); },
 
   // AI core
@@ -26,6 +27,19 @@ contextBridge.exposeInMainWorld('codeply', {
   // File ops
   browseFile() { return ipcRenderer.invoke('file:browse'); },
   readFile(p) { return ipcRenderer.invoke('file:read', p); },
+
+  // ── Intelligent file detection & multi-file placement ───────────────────────
+  getProjectInfo() { return ipcRenderer.invoke('project:info'); },
+  hintFile(text) { return ipcRenderer.invoke('hint:file', { text }); },
+  detectFiles(code) { return ipcRenderer.invoke('detect:files', { code }); },
+  smartMerge(payload) { return ipcRenderer.invoke('merge:smart', payload); },
+  applyMultiFiles(files) { return ipcRenderer.invoke('multi:apply', { files }); },
+
+  // ── File history (revert to previous versions) ──────────────────────────────
+  fileHistory: {
+    list(filePath) { return ipcRenderer.invoke('history:snapshots', filePath); },
+    revert(filePath, snapshotName) { return ipcRenderer.invoke('history:revert', { filePath, snapshotName }); },
+  },
 
   // Settings
   getSettings() { return ipcRenderer.invoke('settings:get'); },
@@ -61,6 +75,7 @@ contextBridge.exposeInMainWorld('codeply', {
   subscription: {
     check() { return ipcRenderer.invoke('subscription:check'); },
   },
+  getApplyLimit() { return ipcRenderer.invoke('apply-limit:get'); },
 
   // ── Cloud history ───────────────────────────────────────────────────────────
   history: {
@@ -96,7 +111,4 @@ contextBridge.exposeInMainWorld('codeply', {
     onError(cb)      { ipcRenderer.on('update:error',      (_, d) => cb(d)); },
     onUiUpdated(cb)  { ipcRenderer.on('ui:updated',        (_, d) => cb(d)); },
   },
-
-  // ── AI events (model fallback notifications) ────────────────────────────────
-  onModelFallback(cb) { ipcRenderer.on('ai:model-fallback', (_, d) => cb(d)); },
 });

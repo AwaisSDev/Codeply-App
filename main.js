@@ -8,14 +8,22 @@ const {
   Tray,
   Menu,
   nativeImage,
-  shell,
-  safeStorage
+  shell
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { exec } = require('child_process');
 const { autoUpdater } = require('electron-updater');
+
+// ── Codeply feature modules ───────────────────────────────────────────────────
+const groq = require('./lib/groq');                       // sole AI provider (Task 1)
+const { showAliveNotification } = require('./lib/notifier'); // startup popup (Task 2)
+const projectStore = require('./lib/project-store');      // .codeply cache/history (Task 3)
+const fileDetect = require('./lib/file-detect');          // auto file detection (Task 4)
+
+// Dev convenience only — packaged builds read GROQ_API_KEY from the real env.
+groq.loadDotEnv(__dirname);
 
 // ─── Supabase Config ───────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://zswkhfkfseclgadhvobg.supabase.co';
@@ -97,27 +105,7 @@ async function persistAuthUser(user) {
   if (!mapped) return null;
   savedSettings.user = { name: mapped.name, email: mapped.email, avatar: mapped.avatar };
   persistSettings();
-  // Load this user's API key + settings from the cloud
-  await fetchCloudSettings(user.id);
   return mapped;
-}
-
-// ── Cloud settings (Supabase user_settings table) ─────────────────────────────
-
-/** Returns a valid access token: uses the current session if fresh, refreshes if expired. */
-async function getValidAccessToken() {
-  if (!supabase) return null;
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-    // If token expires in more than 60 seconds, use it as-is
-    const expiresAt = session.expires_at ?? 0;
-    if (Math.floor(Date.now() / 1000) < expiresAt - 60) return session.access_token;
-    // Token expired or about to — refresh it
-    const { data: refreshed, error } = await supabase.auth.refreshSession();
-    if (error || !refreshed?.session) return null;
-    return refreshed.session.access_token;
-  } catch { return null; }
 }
 
 // ── Direct Supabase helpers (history — non-sensitive, no encryption needed) ────
@@ -140,49 +128,70 @@ async function logUsageToCloud({ model, tokensIn, tokensOut, tokensTotal, prompt
   } catch (e) { console.warn('[Cloud] history log failed:', e.message); }
 }
 
-// ── Cloud settings ─────────────────────────────────────────────────────────────
+// ── Daily apply limit (500 applies/day/user) ────────────────────────────────
+// Counts each successful FILE WRITE (a multi-file apply counts once per file,
+// not once per click — otherwise one big batch could blow straight past the
+// cap). Signed-in users are checked against Supabase (apply_history table +
+// get_daily_apply_count() RPC, see supabase/apply_limit.sql — the real,
+// server-side count for that account, not per-device). A guest with no
+// session falls back to a local dated counter — not tamper-proof, but
+// consistent with how this app already treats local-only state elsewhere.
+const DAILY_APPLY_LIMIT = 500;
+const applyCountPath = path.join(app.getPath('userData'), 'codeply-apply-count.json');
 
-async function fetchCloudSettings(userId) {
-  if (!supabase || !userId) return;
+function loadLocalApplyCount() {
+  const today = new Date().toISOString().slice(0, 10);
   try {
-    const accessToken = await getValidAccessToken();
-    if (!accessToken) { savedSettings.apiKey = ''; persistSettings(); return; }
-
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/api-key`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'apikey': SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ action: 'get' }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      savedSettings.apiKey = ''; savedSettings.model = ''; savedSettings.tokenCap = 0;
-      persistSettings(); return;
-    }
-
-    // Always overwrite with cloud values — never fall back to leftover local
-    // settings from a previous account (that's what leaks keys across accounts).
-    savedSettings.apiKey = data.api_key || '';
-    savedSettings.provider = data.provider || 'openrouter';
-    savedSettings.model = data.model || '';
-    savedSettings.tokenCap = (data.token_cap !== undefined && data.token_cap !== null) ? data.token_cap : 0;
-    // Only overwrite modelRanking if cloud explicitly returned it.
-    // If the field is absent (edge function not redeployed yet), keep local copy.
-    if (data.model_ranking !== undefined && data.model_ranking !== null) {
-      savedSettings.modelRanking = Array.isArray(data.model_ranking) ? data.model_ranking : [];
-    }
-
-    persistSettings();
-    console.log('[Cloud] Settings loaded for user', userId, '— models:', savedSettings.modelRanking.length);
-  } catch (e) {
-    console.warn('[Cloud] fetchCloudSettings error:', e.message);
-    savedSettings.apiKey = ''; savedSettings.model = ''; savedSettings.tokenCap = 0;
-    persistSettings();
-  }
+    const raw = JSON.parse(fs.readFileSync(applyCountPath, 'utf8'));
+    if (raw.date === today) return raw.count || 0;
+  } catch { }
+  return 0;
 }
+function bumpLocalApplyCount() {
+  const today = new Date().toISOString().slice(0, 10);
+  const count = loadLocalApplyCount() + 1;
+  try { fs.writeFileSync(applyCountPath, JSON.stringify({ date: today, count })); } catch { }
+  return count;
+}
+
+/**
+ * Returns { allowed, count, limit }. Fails OPEN on any Supabase hiccup (same
+ * philosophy as subscription:check below) so a DB blip never blocks someone
+ * mid-work — it just quietly falls back to the local guest counter.
+ */
+async function checkApplyLimit() {
+  if (supabase) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data, error } = await supabase.rpc('get_daily_apply_count');
+        if (!error && typeof data === 'number') {
+          return { allowed: data < DAILY_APPLY_LIMIT, count: data, limit: DAILY_APPLY_LIMIT };
+        }
+      }
+    } catch (e) { console.warn('[apply-limit] cloud check failed:', e.message); }
+  }
+  const count = loadLocalApplyCount();
+  return { allowed: count < DAILY_APPLY_LIMIT, count, limit: DAILY_APPLY_LIMIT };
+}
+
+/** Records one successful file write toward the daily cap. Fire-and-forget. */
+async function recordApplyEvent(filePath) {
+  if (supabase) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await supabase.from('apply_history').insert({ user_id: session.user.id, file_path: filePath || '' });
+        return;
+      }
+    } catch (e) { console.warn('[apply-limit] cloud record failed:', e.message); }
+  }
+  bumpLocalApplyCount();
+}
+
+// ── Cloud settings ─────────────────────────────────────────────────────────────
+// API keys and model settings no longer sync to the cloud — the AI engine is
+// built in (Groq via env). Only the referral source is still recorded.
 
 /** Records where the user said they heard about Codeply. Fire-and-forget. */
 async function pushReferralSource(userId, referralSource) {
@@ -192,186 +201,11 @@ async function pushReferralSource(userId, referralSource) {
   } catch (e) { console.warn('[Cloud] pushReferralSource error:', e.message); }
 }
 
-async function pushCloudSettings(userId, data) {
-  if (!supabase || !userId) return { success: false, error: 'Not logged in' };
-  try {
-    const accessToken = await getValidAccessToken();
-    if (!accessToken) return { success: false, error: 'Session expired, please log in again' };
-
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/api-key`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'apikey': SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({
-        action: 'save',
-        api_key: data.apiKey ?? savedSettings.apiKey ?? '',
-        provider: data.provider ?? savedSettings.provider ?? 'openrouter',
-        model: data.model ?? savedSettings.model ?? '',
-        token_cap: data.tokenCap ?? savedSettings.tokenCap ?? 0,
-        model_ranking: data.modelRanking ?? savedSettings.modelRanking ?? [],
-      }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const detail = json?.error || `HTTP ${res.status}`;
-      console.warn('[Cloud] pushCloudSettings error:', detail);
-      return { success: false, error: detail };
-    }
-    console.log('[Cloud] Settings saved (server-encrypted) for user', userId);
-    return { success: true };
-  } catch (e) {
-    console.warn('[Cloud] pushCloudSettings error:', e.message);
-    return { success: false, error: e.message };
-  }
-}
-
-// ── AI call engine ────────────────────────────────────────────────────────────
-
-/** Base URL for each provider. */
-function providerUrl(provider, customUrl) {
-  switch (provider) {
-    case 'openai': return 'https://api.openai.com/v1/chat/completions';
-    case 'groq': return 'https://api.groq.com/openai/v1/chat/completions';
-    case 'xai':
-    case 'grok': return 'https://api.x.ai/v1/chat/completions';
-    case 'deepseek': return 'https://api.deepseek.com/v1/chat/completions';
-    case 'kimi': return 'https://api.moonshot.cn/v1/chat/completions';
-    case 'google': return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-    case 'anthropic': return 'https://api.anthropic.com/v1/messages';
-    case 'ollama': return customUrl || 'http://localhost:11434/v1/chat/completions';
-    case 'ollama-cloud': return 'https://ollama.com/v1/chat/completions';
-    case 'custom': return customUrl || 'https://openrouter.ai/api/v1/chat/completions';
-    default: return 'https://openrouter.ai/api/v1/chat/completions';
-  }
-}
-
-/** Call one model entry. Returns { ok, status, data }. */
-async function callSingleModel(entry, messages, expectJson) {
-  const url = providerUrl(entry.provider, entry.customUrl);
-
-  // Anthropic has a different request/response format
-  if (entry.provider === 'anthropic') {
-    const sysMsg = messages.find(m => m.role === 'system')?.content || '';
-    const chatMsgs = messages.filter(m => m.role !== 'system');
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': entry.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: entry.modelId,
-        max_tokens: 8192,
-        ...(sysMsg ? { system: sysMsg } : {}),
-        messages: chatMsgs,
-      }),
-    });
-    const data = await res.json();
-    // Normalize to OpenAI-style response
-    if (data.content?.[0]?.text) {
-      data.choices = [{ message: { content: data.content[0].text, role: 'assistant' } }];
-      data.usage = { total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0) };
-    }
-    return { ok: res.ok, status: res.status, data };
-  }
-
-  // OpenAI-compatible (OpenRouter, OpenAI, Groq, xAI, DeepSeek, Kimi, Google, Ollama)
-  const headers = { 'Content-Type': 'application/json' };
-  // Local Ollama needs no auth (keyless); Ollama Cloud and everything else use a
-  // bearer key. So send the header whenever there's a key, or for non-Ollama.
-  if (entry.provider !== 'ollama' || entry.apiKey) {
-    headers['Authorization'] = `Bearer ${entry.apiKey || ''}`;
-  }
-  if ((entry.provider || 'openrouter') === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://codeply.app';
-    headers['X-Title'] = 'Codeply';
-  }
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: entry.modelId,
-      messages,
-      temperature: 0,
-      ...(expectJson ? { response_format: { type: 'json_object' } } : {}),
-    }),
-  });
-  const data = await res.json();
-  return { ok: res.ok, status: res.status, data };
-}
-
-/**
- * Call AI using a specific selected model (by id), with fallback through
- * remaining enabled models, then the poolside default.
- * selectedModelId: the model.id the user picked in the popup (may be null).
- */
-async function callAI(selectedModelId, messages, expectJson = true) {
-  const allModels = (savedSettings.modelRanking || [])
-    // Ollama (local) is keyless; every other provider needs an API key.
-    .filter(m => m.enabled !== false && m.modelId && (m.apiKey || m.provider === 'ollama'));
-
-  // Put selected model first, then the rest in order
-  let ordered;
-  if (selectedModelId) {
-    const sel = allModels.find(m => m.id === selectedModelId);
-    const rest = allModels.filter(m => m.id !== selectedModelId);
-    ordered = sel ? [sel, ...rest] : allModels;
-  } else {
-    ordered = allModels;
-  }
-
-  // User-designated default model = guaranteed last-resort fallback. If anything
-  // earlier in the chain fails, requests cascade down to it. (Skip if it's the
-  // explicitly selected model — then it's already first and tried once is enough.)
-  const defaultModel = allModels.find(m => m.isDefault);
-  if (defaultModel && defaultModel.id !== selectedModelId) {
-    ordered = ordered.filter(m => m.id !== defaultModel.id);
-    ordered.push(defaultModel);
-  }
-
-  const tried = [];
-  for (const model of ordered) {
-    try {
-      console.log(`[AI] Trying ${model.modelId}`);
-      const { ok, status, data } = await callSingleModel(model, messages, expectJson);
-      if (ok && data.choices?.[0]) {
-        console.log(`[AI] ✓ ${model.modelId}`);
-        // Notify the popup if we fell back from a failing model
-        if (tried.length > 0 && popupWindow && !popupWindow.isDestroyed()) {
-          popupWindow.webContents.send('ai:model-fallback', { failed: tried, used: model.modelId });
-        }
-        return { success: true, data, modelUsed: model.modelId };
-      }
-      const errMsg = data?.error?.message || data?.error?.code || `HTTP ${status}`;
-      tried.push(`${model.modelId}: ${errMsg}`);
-      console.warn(`[AI] ${model.modelId} failed (${status}): ${errMsg}`);
-    } catch (e) {
-      tried.push(`${model.modelId}: ${e.message}`);
-      console.warn(`[AI] ${model.modelId} threw: ${e.message}`);
-    }
-  }
-
-  // Legacy single-model fallback (backward compat with old single-key settings)
-  if (savedSettings.apiKey && savedSettings.model) {
-    try {
-      const legacy = { provider: savedSettings.provider || 'openrouter', modelId: savedSettings.model, apiKey: savedSettings.apiKey };
-      const { ok, data } = await callSingleModel(legacy, messages, expectJson);
-      if (ok && data.choices?.[0]) {
-        console.log('[AI] ✓ Legacy model');
-        return { success: true, data, modelUsed: savedSettings.model };
-      }
-    } catch { /* ignore */ }
-  }
-
-  const errDetail = tried.length > 0
-    ? `All models failed. Last: ${tried.slice(-2).join(' | ')}`
-    : 'No models configured. Add a model in Settings.';
-  return { success: false, error: errDetail };
+// ── AI call engine — Groq only (Task 1) ───────────────────────────────────────
+// The single AI provider. Key comes from the GROQ_API_KEY env var; there is no
+// model selection anywhere in the app. Plug and play.
+async function callAI(messages, expectJson = true) {
+  return groq.chat(messages, { json: expectJson });
 }
 
 /** Get the Supabase user ID of the currently logged-in user, or null. */
@@ -469,6 +303,9 @@ app.on('second-instance', async (event, commandLine) => {
     await ensureSupabaseReady();
     handleAuthCallback(url);
   }
+  // Already running in the background and the user launched it again —
+  // remind them Codeply is alive and how to summon it (Task 2).
+  if (!savedSettings.aliveNotificationDisabled) showAliveNotification(UI_ROOT);
   if (dashboardWindow && !dashboardWindow.isDestroyed()) { dashboardWindow.show(); dashboardWindow.focus(); }
 });
 
@@ -600,44 +437,20 @@ async function checkUiUpdate() {
 }
 
 // ─── Config & Usage Persistence ───────────────────────────────────────────────
-
-// ── API-key encryption using Electron safeStorage (OS keychain/DPAPI) ──────────
-// On disk: { apiKey: '<base64 ciphertext>', apiKeyEncrypted: true }
-// In memory (savedSettings): apiKey is always plaintext for API calls
-function encryptApiKey(plaintext) {
-  if (!plaintext) return { value: '', encrypted: false };
-  try {
-    if (safeStorage.isEncryptionAvailable()) {
-      const buf = safeStorage.encryptString(plaintext);
-      return { value: buf.toString('base64'), encrypted: true };
-    }
-  } catch (e) { console.warn('[safeStorage] encrypt failed:', e.message); }
-  return { value: plaintext, encrypted: false };
-}
-
-function decryptApiKey(stored, wasEncrypted) {
-  if (!stored || !wasEncrypted) return stored;
-  try {
-    if (safeStorage.isEncryptionAvailable()) {
-      return safeStorage.decryptString(Buffer.from(stored, 'base64'));
-    }
-  } catch (e) { console.warn('[safeStorage] decrypt failed:', e.message); }
-  return stored;
-}
+// Model/provider/API-key settings are gone — the AI engine is built in (Groq
+// via the GROQ_API_KEY env var). Legacy key fields from old installs are
+// stripped on load so no stale ciphertext lingers on disk.
 
 function loadSettings() {
   try {
     if (fs.existsSync(configPath)) {
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      // Decrypt the API key so the rest of the app always sees plaintext
-      if (raw.apiKeyEncrypted && raw.apiKey) {
-        raw.apiKey = decryptApiKey(raw.apiKey, true);
-        delete raw.apiKeyEncrypted;
-      }
+      delete raw.apiKey; delete raw.apiKeyEncrypted;
+      delete raw.provider; delete raw.model; delete raw.modelRanking;
       return raw;
     }
   } catch (e) { console.error("Config load error:", e); }
-  return { provider: 'openrouter', model: 'openai/gpt-4o-mini', apiKey: '', theme: 'dark', hotkey: 'Alt+C', user: null, popupPos: null, watchFolder: '', modelRanking: [] };
+  return { theme: 'dark', hotkey: 'Alt+C', user: null, popupPos: null, watchFolder: '' };
 }
 
 function loadUsage() {
@@ -653,14 +466,7 @@ function saveUsage(usage) {
 
 function persistSettings() {
   try {
-    // Encrypt the API key before writing — savedSettings keeps plaintext in memory
-    const toWrite = { ...savedSettings };
-    if (toWrite.apiKey) {
-      const { value, encrypted } = encryptApiKey(toWrite.apiKey);
-      toWrite.apiKey = value;
-      if (encrypted) toWrite.apiKeyEncrypted = true;
-    }
-    fs.writeFileSync(configPath, JSON.stringify(toWrite, null, 2));
+    fs.writeFileSync(configPath, JSON.stringify(savedSettings, null, 2));
   } catch (e) { console.error("Settings save error:", e); }
 }
 
@@ -811,13 +617,26 @@ function togglePopup() {
 function detectLanguage(code) {
   if (!code) return 'Code';
   if (code.includes('def ') || code.includes('import ') && code.includes(':')) return 'Python';
+  if (code.includes('<div') || code.includes('</') || code.includes('className=')) return 'JSX/HTML';
+  if (/[.#]?[\w-]+(\s*[,>+~]\s*[.#]?[\w-]+)*\s*\{[^{}]*[\w-]+\s*:\s*[^;{}]+;/.test(code)) return 'CSS';
   if (code.includes('function ') || code.includes('=>') || code.includes('const ') || code.includes('let ')) return 'JavaScript';
   if (code.includes('interface ') || code.includes(': string') || code.includes(': number')) return 'TypeScript';
-  if (code.includes('<div') || code.includes('</') || code.includes('className=')) return 'JSX/HTML';
   if (code.includes('SELECT ') || code.includes('FROM ') || code.includes('WHERE ')) return 'SQL';
   if (code.includes('pub fn') || code.includes('let mut')) return 'Rust';
   if (code.includes('func ') && code.includes('{')) return 'Go';
   return 'Code';
+}
+
+// Coarse "does this snippet's language obviously conflict with the target
+// file's extension" guard — e.g. CSS pasted into a .py file. Only flags the
+// clearest mismatches; anything ambiguous is left alone rather than blocked.
+function snippetLooksForeignTo(code, filePath) {
+  if (!filePath) return false;
+  const ext = path.extname(filePath).toLowerCase();
+  const lang = detectLanguage(code);
+  if (lang === 'CSS') return !['.css', '.scss', '.sass', '.less', '.html', '.htm', '.vue', '.svelte'].includes(ext);
+  if (lang === 'Python') return ['.js', '.jsx', '.ts', '.tsx', '.css', '.scss', '.html', '.htm', '.json'].includes(ext);
+  return false;
 }
 
 // ─── Code Heuristic ────────────────────────────────────────────────────────────
@@ -860,7 +679,17 @@ function looksLikeInstruction(text) {
   if (lines.length > 5) return false;                     // multi-line → probably code
   const first = lines[0];
   if (/[{};]\s*$/.test(first)) return false;              // ends like a code statement
-  return INSTRUCTION_RE.test(first);
+  if (!INSTRUCTION_RE.test(first)) return false;
+
+  // An instruction-shaped FIRST line followed by real code isn't a standalone
+  // command — it's a labeled/commented snippet (e.g. "add this complement"
+  // pasted above actual JS). Treat the whole thing as code so it goes through
+  // file detection + cleanSnippet's prose-stripping instead of aiCommand
+  // rewriting whatever file happens to be "active" right now.
+  const rest = lines.slice(1).join('\n').trim();
+  if (rest && looksLikeCode(rest)) return false;
+
+  return true;
 }
 
 // ─── Snippet Cleaner ────────────────────────────────────────────────────────────
@@ -1039,6 +868,19 @@ function sendActiveFile() {
 function startFolderWatch() {
   if (watchTimer) clearInterval(watchTimer);
   activeFilePath = null;
+
+  // Task 3+4: stand up the per-project .codeply/ store (cache, history,
+  // gitignore, size cap) and detect the framework — all silent.
+  const folder = savedSettings.watchFolder;
+  projectStore.init(folder && fs.existsSync(folder) ? folder : null);
+  if (projectStore.isReady()) {
+    try {
+      const fws = fileDetect.detectFrameworks(folder);
+      const primary = fileDetect.primaryFramework(fws);
+      if (primary) console.log('[codeply] framework detected:', primary);
+    } catch (e) { console.warn('[codeply] framework detect failed:', e.message); }
+  }
+
   pollActiveFile();
   // Re-scan every 3s so saving a file in your editor re-targets it quickly.
   watchTimer = setInterval(pollActiveFile, 3000);
@@ -1050,6 +892,11 @@ ipcMain.on('refresh-clipboard', () => {
   pushClipboardSnippet(true);
   sendActiveFile();
 });
+
+// One-shot clipboard read for the Write box's "Paste" button — lets the user
+// pull in whatever they copied from an AI website without leaving Write mode
+// (which otherwise ignores background clipboard sync while typing).
+ipcMain.handle('clipboard:read', () => clipboard.readText());
 
 ipcMain.handle('settings:get', () => savedSettings);
 
@@ -1068,17 +915,11 @@ ipcMain.handle('settings:save', async (_, settings) => {
       globalShortcut.register(savedSettings.hotkey || 'Alt+C', togglePopup);
     } catch (e) { console.warn('[hotkey] live re-register failed:', e.message); }
   }
-  // Push API key + AI settings to the cloud if user is logged in
-  const userId = await getLoggedInUserId();
-  if (userId) {
-    const cloudResult = await pushCloudSettings(userId, settings);
-    if (!cloudResult.success) {
-      return { success: false, error: cloudResult.error };
-    }
-    if (settings.referralSource) pushReferralSource(userId, settings.referralSource);
+  // Record referral source for logged-in users (fire-and-forget).
+  if (settings.referralSource) {
+    const userId = await getLoggedInUserId();
+    if (userId) pushReferralSource(userId, settings.referralSource);
   }
-  // Tell the popup + dashboard to pull the new API key / model list immediately,
-  // so the next AI request uses them — no app restart needed.
   broadcastSettingsUpdated();
   return { success: true };
 });
@@ -1289,6 +1130,19 @@ function localAnalyze(code, filePath) {
     return { action: 'append', startLine: null, endLine: null, anchor: null, reason: 'No target file, paste preview only.', confidence: 40, code };
   }
   const content = fs.readFileSync(filePath, 'utf8');
+
+  // Never blindly graft foreign-language code onto a real, non-empty file —
+  // a coding-agent harness proposes creating the right file instead of
+  // corrupting the wrong one. Appending to an EMPTY file is harmless (there's
+  // nothing to corrupt), so only guard non-empty targets.
+  if (content.trim() && snippetLooksForeignTo(code, filePath)) {
+    return {
+      action: 'none', startLine: null, endLine: null, anchor: null,
+      reason: `This looks like ${detectLanguage(code)}, which doesn't belong in ${path.basename(filePath)}. Pick a matching file, or let Codeply create a new one.`,
+      confidence: 10, code
+    };
+  }
+
   const lines = content.split('\n');
   const first = (code.trim().split('\n')[0] || '').trim();
 
@@ -1441,26 +1295,57 @@ function localCommand(instruction, filePath) {
       return {
         action: 'delete',
         deleteLines: del.map(i => i + 1),
-        reason: `Removing ${del.length} ${label}.` + (compound ? ' (The “add” part needs an API key.)' : ''),
+        reason: `Removing ${del.length} ${label}.` + (compound ? ' (The “add” part needs the AI engine.)' : ''),
         confidence: compound ? 60 : 82,
         code: ''
       };
     }
-    return { action: 'none', reason: 'Nothing matched to remove. Add an API key for smarter edits.', confidence: 20, code: '' };
+    return { action: 'none', reason: 'Nothing matched to remove offline. The AI engine is unavailable right now.', confidence: 20, code: '' };
   }
 
   // add / change / refactor etc. can't be done reliably offline.
-  return { action: 'none', reason: 'This edit needs an API key (Settings) so the AI can apply it precisely.', confidence: 15, code: '' };
+  return { action: 'none', reason: 'This edit needs the AI engine, which is unavailable right now (GROQ_API_KEY not set).', confidence: 15, code: '' };
 }
 
 // ─── AI Command (full edit via LLM) ─────────────────────────────────────────────
-async function aiCommand(instruction, filePath, selectedModelId) {
+/**
+ * `history` is the popup's recent turn-by-turn conversation for THIS session
+ * (renderer-tracked, capped small): [{ instruction, filePath, timestamp }, …],
+ * oldest first. It's what lets a follow-up like "make it 4 instead of 2"
+ * resolve correctly instead of the model guessing at some unrelated "2" in
+ * the file — the history supplies WHAT was just discussed, the full file
+ * content (already reflecting every prior edit) supplies the ground truth
+ * of what's actually there now. Same principle a coding-agent session uses:
+ * recent intent + current state, not just current state alone.
+ */
+async function aiCommand(instruction, filePath, history) {
   if (!filePath || !fs.existsSync(filePath)) return { success: false, error: 'Pick a target file first.' };
   const content = fs.readFileSync(filePath, 'utf8');
 
-  const systemPrompt = `You are a precise code editor. You receive an INSTRUCTION and the FULL current file. Apply ONLY what the instruction asks, and nothing else.
+  const hist = Array.isArray(history) ? history.slice(-8) : [];
+  // Cache key folds in the history text too — the same instruction can mean
+  // something different depending on what was just discussed, so it's a
+  // genuinely different request, not a cache hit, when the context differs.
+  const historyKey = hist.length ? 'ctx:' + hist.map(h => h.instruction).join('␟') + '|' : '';
+
+  // Response cache (Task 3): same file content + same instruction + same
+  // recent context → instant.
+  const cachedRes = projectStore.cacheGet(content, 'command:' + historyKey + instruction);
+  if (cachedRes) return { ...cachedRes, cached: true, tokensUsed: 0 };
+
+  const historySection = hist.length
+    ? '\n\nCONVERSATION SO FAR (most recent last, use this to resolve references like "it", "that", "instead of 2", "also do X" in the current instruction):\n' +
+      hist.map((h, i) => {
+        const other = h.filePath && h.filePath !== filePath ? ` (in ${path.basename(h.filePath)})` : '';
+        return `${i + 1}. "${h.instruction}"${other}`;
+      }).join('\n')
+    : '';
+
+  const systemPrompt = `You are a precise code editor. You receive a CURRENT INSTRUCTION and the FULL current file, plus recent conversation history for context. Apply ONLY what the CURRENT instruction asks, and nothing else.
 
 Hard rules:
+- If the current instruction references something from the conversation ("it", "that", "instead of 2", "also do X"), use CONVERSATION SO FAR to identify exactly what it refers to, then locate and change that specific thing in the FULL FILE (which already reflects everything previously applied). Do not touch anything else that merely happens to match loosely.
+- If the same property/selector/value appears more than once (e.g. "top" set in both a "from" and a "to" block), use every clue in the instruction — the CURRENT value it names, nearby selectors, rule/keyframe names, ordering — to change only the ONE correct occurrence. Never touch a same-named occurrence just because it was the easiest match.
 - Return ONLY valid JSON, no markdown, no commentary.
 - Do NOT add comments, documentation, or explanations to the code unless explicitly told to.
 - Preserve every unrelated line exactly as-is.
@@ -1474,44 +1359,76 @@ Response format:
   "confidence": <0-100>
 }`;
 
-  const messages = [
+  const baseMessages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `INSTRUCTION:\n${instruction}\n\nFULL FILE (${path.basename(filePath)}):\n${content}` }
+    // File first (large/stable), instruction last (small/always-different) —
+    // see the matching comment in computeInstructionEdits for why this order
+    // matters for Groq's prefix-based prompt caching.
+    { role: 'user', content: `FULL FILE (${path.basename(filePath)}):\n${content}\n\nCURRENT INSTRUCTION:\n${instruction}${historySection}` }
   ];
+  // Groq's structured-output mode ("must be valid JSON") occasionally fails to
+  // produce parseable JSON on a given sample — a probabilistic model hiccup,
+  // not a real problem with the request. Retry a couple of times with a
+  // sharper reminder before giving up, the same resilience philosophy as the
+  // SEARCH/REPLACE engine's self-correcting retries.
+  const MAX_ATTEMPTS = 3;
+  let totalTokens = 0;
+  let lastModelUsed = null;
+  let lastError = null;
 
   try {
-    const aiResult = await callAI(selectedModelId, messages, true);
-    if (!aiResult.success) return { success: false, error: aiResult.error };
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const messages = attempt === 0 ? baseMessages : [
+        ...baseMessages,
+        { role: 'user', content: 'Your last reply could not be parsed as JSON. Return ONLY the JSON object described above — no markdown fences, no commentary, no text before or after it.' }
+      ];
 
-    const data = aiResult.data;
-    const usg = data.usage || {};
-    const tokensUsed = usg.total_tokens || 0;
-    usageData.totalTokens += tokensUsed;
-    usageData.totalRequests += 1;
-    usageData.history.unshift({
-      id: Date.now(), timestamp: new Date().toISOString(), model: aiResult.modelUsed || savedSettings.model,
-      tokens: tokensUsed, snippet: instruction.slice(0, 80), file: path.basename(filePath)
-    });
-    if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
-    saveUsage(usageData);
-    // Log to cloud (fire-and-forget)
-    logUsageToCloud({
-      model: aiResult.modelUsed || savedSettings.model,
-      tokensIn: usg.prompt_tokens || 0,
-      tokensOut: usg.completion_tokens || 0,
-      tokensTotal: tokensUsed,
-      promptText: instruction,
-      filePath,
-    });
+      const aiResult = await callAI(messages, true);
+      if (!aiResult.success) {
+        lastError = aiResult.error;
+        // Rate-limited (and the OpenRouter fallback, if any, already tried
+        // and also failed inside groq.chat) — retrying here is guaranteed to
+        // fail the same way. Stop immediately instead of burning 2 more calls.
+        if (groq.isRateLimitError(lastError)) break;
+        continue;
+      }
+      if (aiResult.modelUsed) lastModelUsed = aiResult.modelUsed;
 
-    let result;
-    try { result = JSON.parse(data.choices[0].message.content); }
-    catch (e) { return { success: false, error: 'AI returned an unreadable response.' }; }
+      const data = aiResult.data;
+      const usg = data.usage || {};
+      totalTokens += usg.total_tokens || 0;
 
-    if (typeof result.content !== 'string') return { success: false, error: 'AI did not return updated file content.' };
-    result.action = 'rewrite';
-    if (result.confidence == null) result.confidence = 75;
-    return { success: true, result, tokensUsed, modelUsed: aiResult.modelUsed };
+      let result;
+      try { result = JSON.parse(data.choices[0].message.content); }
+      catch (e) { lastError = 'AI returned an unreadable response.'; continue; }
+
+      if (typeof result.content !== 'string') { lastError = 'AI did not return updated file content.'; continue; }
+
+      usageData.totalTokens += totalTokens;
+      usageData.totalRequests += 1;
+      usageData.history.unshift({
+        id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+        tokens: totalTokens, snippet: instruction.slice(0, 80), file: path.basename(filePath)
+      });
+      if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
+      saveUsage(usageData);
+      logUsageToCloud({
+        model: lastModelUsed || groq.GROQ_MODEL,
+        tokensIn: usg.prompt_tokens || 0,
+        tokensOut: usg.completion_tokens || 0,
+        tokensTotal: totalTokens,
+        promptText: instruction,
+        filePath,
+      });
+
+      result.action = 'rewrite';
+      if (result.confidence == null) result.confidence = 75;
+      const payload = { success: true, result, tokensUsed: totalTokens, modelUsed: lastModelUsed };
+      projectStore.cacheSet(content, 'command:' + historyKey + instruction, payload, filePath);
+      return payload;
+    }
+
+    return { success: false, error: lastError || 'The AI could not produce a valid response after a few tries.' };
 
   } catch (err) {
     return { success: false, error: err.message };
@@ -1520,12 +1437,14 @@ Response format:
 
 // ─── Core AI Analyze + Apply ───────────────────────────────────────────────────
 
-ipcMain.handle('snippet:analyze', async (_, { code, filePath, selectedModelId }) => {
+ipcMain.handle('snippet:analyze', async (_, { code, filePath, forceInstruction, history }) => {
   const raw = (code || '').trim();
   if (!raw || raw.startsWith('//')) return { success: false, error: 'Nothing to analyze.' };
 
   // ── Full-file replace ("replace the whole file with this …" / full document) ──
-  const replace = parseReplaceCommand(raw);
+  // Skipped for typed requests (forceInstruction) — free text is never a
+  // pasted full document, and treating it as one would misfire.
+  const replace = !forceInstruction && parseReplaceCommand(raw);
   if (replace) {
     if (!filePath || !fs.existsSync(filePath)) {
       return {
@@ -1540,20 +1459,59 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, selectedModelId })
   }
 
   // ── Natural-language instruction → edit command ──
-  if (looksLikeInstruction(raw)) {
-    const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && (m.apiKey || m.provider === 'ollama'));
-    if (!savedSettings.apiKey && !hasModels) {
+  // forceInstruction (typed directly into the popup's Write box) always goes
+  // this way, bypassing the narrow verb-based heuristic — the user explicitly
+  // wrote this with intent, unlike ambient clipboard text that needs filtering.
+  if (forceInstruction || looksLikeInstruction(raw)) {
+    // No AI engine (GROQ_API_KEY missing) → offline command interpreter.
+    if (!groq.isConfigured()) {
       return { success: true, result: localCommand(raw, filePath), tokensUsed: 0, local: true };
     }
-    return await aiCommand(raw, filePath, selectedModelId);
+
+    // Prefer a small surgical edit over a full-file rewrite whenever the
+    // file already has real content — asking the model to echo back an
+    // entire file just to change one value is slow, token-hungry (risks
+    // hitting the free-tier rate limit), and far likelier to come back
+    // truncated/malformed than a tiny diff. Only fall back to aiCommand's
+    // full rewrite when this genuinely can't be expressed as a small edit.
+    const existingContent = filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    if (existingContent.trim()) {
+      try {
+        const edited = await computeInstructionEdits(raw, filePath, history);
+        if (edited.edits.length) {
+          const result = {
+            action: 'edits',
+            edits: edited.edits,
+            code: '',
+            search: edited.edits[0].search,
+            replace: edited.edits[0].replace,
+            confidence: edited.confidence,
+            reason: edited.badCount
+              ? `${edited.reason || 'Prepared edits'}. Note: ${edited.badCount} change(s) couldn't be matched and were skipped.`
+              : (edited.reason || `Prepared ${edited.edits.length} edit(s), all verified against the file.`),
+          };
+          return { success: true, result, tokensUsed: edited.tokensUsed, partial: edited.badCount > 0, modelUsed: edited.modelUsed, cached: !!edited.cached };
+        }
+        // No usable edits — either the model decided this needs large new
+        // content, or nothing could be anchored. Fall through to a rewrite.
+      } catch (e) {
+        // Rate-limited (OpenRouter fallback already tried inside groq.chat
+        // and also failed) — aiCommand would just hit the exact same wall on
+        // its very next call. Fail fast instead of wasting another
+        // round-trip (and its own retry loop) on a doomed request.
+        if (groq.isRateLimitError(e.message)) return { success: false, error: e.message };
+        console.warn('[instruction] surgical edit attempt failed, falling back to full rewrite:', e.message);
+      }
+    }
+
+    return await aiCommand(raw, filePath, history);
   }
 
   // ── Code snippet → placement. Clean off any AI prose/fences first. ──
   const cleaned = cleanSnippet(raw) || raw;
 
-  // No API key and no models configured? Fall back to local heuristic.
-  const hasModels = (savedSettings.modelRanking || []).some(m => m.enabled !== false && (m.apiKey || m.provider === 'ollama'));
-  if (!savedSettings.apiKey && !hasModels) {
+  // No AI engine available? Fall back to local heuristic.
+  if (!groq.isConfigured()) {
     return { success: true, result: localAnalyze(cleaned, filePath), tokensUsed: 0, local: true };
   }
 
@@ -1568,6 +1526,56 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, selectedModelId })
     try { fileContent = fs.readFileSync(filePath, 'utf8'); } catch (e) { /* skip */ }
   }
 
+  // Response cache (Task 3): identical file content + identical snippet →
+  // return the previous verified answer instantly, no Groq round-trip.
+  const cachedAnalyze = projectStore.cacheGet(fileContent, 'analyze:' + cleaned);
+  if (cachedAnalyze) return { ...cachedAnalyze, cached: true, tokensUsed: 0 };
+
+  try {
+    const computed = await computeSearchReplaceEdits(cleaned, fileContent, filePath);
+    const { edits: good, badCount, confidence, reason, tokensUsed: totalTokens, modelUsed: lastModelUsed } = computed;
+
+    // Nothing the model produced matches the file → offline fallback.
+    if (!good.length) {
+      const fallback = localAnalyze(cleaned, filePath);
+      fallback.reason = 'AI could not produce edits that match the file, used offline placement.';
+      return { success: true, result: fallback, tokensUsed: totalTokens, local: true };
+    }
+
+    const result = {
+      action: 'edits',
+      edits: good,
+      code: cleaned,
+      search: good[0].search,        // keep first hunk visible for the renderer preview
+      replace: good[0].replace,
+      confidence,
+      reason: badCount
+        ? `${reason || 'Prepared edits'}. Note: ${badCount} change(s) couldn't be matched and were skipped.`
+        : (reason || `Prepared ${good.length} edit(s), all verified against the file.`)
+    };
+    const payload = { success: true, result, tokensUsed: totalTokens, partial: badCount > 0, modelUsed: lastModelUsed };
+    // Cache only fully-verified plans — a partial plan shouldn't be replayed.
+    if (!badCount) projectStore.cacheSet(fileContent, 'analyze:' + cleaned, payload, filePath);
+    return payload;
+
+  } catch (err) {
+    const fallback = localAnalyze(cleaned, filePath);
+    fallback.reason = `${err.message}, used offline placement instead.`;
+    return { success: true, result: fallback, tokensUsed: 0, local: true };
+  }
+});
+
+// ─── Precise placement engine (SEARCH/REPLACE, self-correcting) ────────────────
+// The core "find exactly which lines to touch" engine — same approach a
+// coding-agent harness uses: locate the exact block verbatim, verify it
+// against the real file, and self-correct up to twice on a mismatch before
+// giving up. Shared by the popup's own Analyze (single file) AND the
+// multi-file / new-code-in-existing-file merge path, so placement precision
+// is identical everywhere instead of multi-file relying on a cruder full-file
+// rewrite. Returns { success:true, edits, badCount, confidence, reason,
+// tokensUsed, modelUsed } or throws on a hard AI failure (caller decides the
+// fallback — offline heuristic for single-file, full-file merge for multi-file).
+async function computeSearchReplaceEdits(cleaned, fileContent, filePath) {
   // SEARCH/REPLACE approach — no line numbers. The AI returns one or more edits,
   // one per location that actually changes, finding each block verbatim.
   const systemPrompt = `You are a code editor. You receive a CODE SNIPPET and the FULL FILE it belongs to.
@@ -1582,7 +1590,7 @@ STRICT RULES:
 1. Return an "edits" array. Use the FEWEST edits that cleanly express the change. If several changes sit inside the same small parent element (e.g. one <main>, one <ul>, one function), return that parent as ONE edit rather than many tiny ones. Only use separate edits for changes in genuinely separate, distant locations.
 2. "search" must be copied VERBATIM from the file — exact existing block being changed. Copy enough lines to be unique, but no more than needed.
 3. To MODIFY something that already exists (add styles/attributes, change text, restyle), set "search" to the EXISTING element and "replace" to the UPDATED element. NEVER insert a second copy of an element that already exists.
-4. Only treat code as NEW (insert) when no matching element exists in the file. To insert, set "search" to the exact existing line it should go after and "replace" to that same line followed by the new code.
+4. Only treat code as NEW (insert) when no matching element exists in the file. To insert, find the most similar/related existing code (same function, same section, same component) and set "search" to that existing anchor line, with "replace" equal to that same line followed by the new code — i.e. land new code NEAR similar existing code, never at a random spot.
 5. NEVER place anything after </body> or </html>. Never create duplicate ids.
 6. "replace" content comes from the snippet — strip placement directive comments, do not add other comments or explanations.
 7. Return ONLY valid JSON. No markdown, no prose outside JSON.
@@ -1610,11 +1618,14 @@ Response format:
   const askModel = async (feedback) => {
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `SNIPPET (insert/replace with this — do not modify):\n\`\`\`\n${cleaned}\n\`\`\`\n\nFULL FILE (${path.basename(filePath || 'unknown')}):\n\`\`\`\n${fileContent}\n\`\`\`` }
+      // File first (large/stable), snippet last (small/always-different) —
+      // see the matching comment in computeInstructionEdits for why this
+      // order matters for Groq's prefix-based prompt caching.
+      { role: 'user', content: `FULL FILE (${path.basename(filePath || 'unknown')}):\n\`\`\`\n${fileContent}\n\`\`\`\n\nSNIPPET (insert/replace with this — do not modify):\n\`\`\`\n${cleaned}\n\`\`\`` }
     ];
     if (feedback) messages.push({ role: 'user', content: feedback });
 
-    const aiResult = await callAI(selectedModelId, messages, true);
+    const aiResult = await callAI(messages, true);
     if (!aiResult.success) throw new Error(aiResult.error);
     if (aiResult.modelUsed) lastModelUsed = aiResult.modelUsed;
     const data = aiResult.data;
@@ -1635,79 +1646,186 @@ Response format:
     return { edits, confidence: parsed.confidence == null ? 75 : parsed.confidence, reason: parsed.reason || '' };
   };
 
-  try {
-    let { edits, confidence, reason } = await askModel();
+  let { edits, confidence, reason } = await askModel();
 
-    const verify = (list) => list.map((e) => ({ e, status: probe(e.search) }));
-    let checked = verify(edits);
-    let bad = checked.filter(c => c.status !== 'ok');
+  const verify = (list) => list.map((e) => ({ e, status: probe(e.search) }));
+  let checked = verify(edits);
+  let bad = checked.filter(c => c.status !== 'ok');
 
-    // Self-correct: feed the failed search blocks back and let the model fix them.
-    // Up to 2 corrective passes — this is what removes the "retry 4 times" loop.
-    let pass = 0;
-    while (bad.length && pass < 2) {
-      pass++;
-      const feedback =
-        `Some "search" blocks from your last answer are wrong. Return the COMPLETE corrected edits array again, fixing these:\n` +
-        bad.map(c => c.status === 'multiple'
-          ? `- Matched MULTIPLE places — include more surrounding lines so it is unique:\n${c.e.search}`
-          : `- NOT found in the file — copy it EXACTLY from the FULL FILE above, character for character:\n${c.e.search}`
-        ).join('\n') +
-        `\nEvery "search" must be copied verbatim from the file shown above.`;
-      const retry = await askModel(feedback);
-      if (retry.edits.length) { edits = retry.edits; confidence = retry.confidence; reason = retry.reason || reason; }
-      checked = verify(edits);
-      bad = checked.filter(c => c.status !== 'ok');
-    }
-
-    const good = checked.filter(c => c.status === 'ok').map(c => c.e);
-
-    // Log usage once for the whole analyze (including any corrective calls).
-    usageData.totalTokens += totalTokens;
-    usageData.totalRequests += 1;
-    usageData.history.unshift({
-      id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || savedSettings.model,
-      tokens: totalTokens, snippet: cleaned.slice(0, 80) + (cleaned.length > 80 ? '...' : ''),
-      file: filePath ? path.basename(filePath) : 'Unknown'
-    });
-    if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
-    saveUsage(usageData);
-    // Log to cloud (fire-and-forget)
-    logUsageToCloud({
-      model: lastModelUsed || savedSettings.model,
-      tokensIn: 0,
-      tokensOut: 0,
-      tokensTotal: totalTokens,
-      promptText: cleaned,
-      filePath: filePath || '',
-    });
-
-    // Nothing the model produced matches the file → offline fallback.
-    if (!good.length) {
-      const fallback = localAnalyze(cleaned, filePath);
-      fallback.reason = 'AI could not produce edits that match the file, used offline placement.';
-      return { success: true, result: fallback, tokensUsed: totalTokens, local: true };
-    }
-
-    const result = {
-      action: 'edits',
-      edits: good,
-      code: cleaned,
-      search: good[0].search,        // keep first hunk visible for the renderer preview
-      replace: good[0].replace,
-      confidence,
-      reason: bad.length
-        ? `${reason || 'Prepared edits'}. Note: ${bad.length} change(s) couldn't be matched and were skipped.`
-        : (reason || `Prepared ${good.length} edit(s), all verified against the file.`)
-    };
-    return { success: true, result, tokensUsed: totalTokens, partial: bad.length > 0, modelUsed: lastModelUsed };
-
-  } catch (err) {
-    const fallback = localAnalyze(cleaned, filePath);
-    fallback.reason = `${err.message}, used offline placement instead.`;
-    return { success: true, result: fallback, tokensUsed: totalTokens, local: true };
+  // Self-correct: feed the failed search blocks back and let the model fix them.
+  // Up to 2 corrective passes — this is what removes the "retry 4 times" loop.
+  let pass = 0;
+  while (bad.length && pass < 2) {
+    pass++;
+    const feedback =
+      `Some "search" blocks from your last answer are wrong. Return the COMPLETE corrected edits array again, fixing these:\n` +
+      bad.map(c => c.status === 'multiple'
+        ? `- Matched MULTIPLE places — include more surrounding lines so it is unique:\n${c.e.search}`
+        : `- NOT found in the file — copy it EXACTLY from the FULL FILE above, character for character:\n${c.e.search}`
+      ).join('\n') +
+      `\nEvery "search" must be copied verbatim from the file shown above.`;
+    const retry = await askModel(feedback);
+    if (retry.edits.length) { edits = retry.edits; confidence = retry.confidence; reason = retry.reason || reason; }
+    checked = verify(edits);
+    bad = checked.filter(c => c.status !== 'ok');
   }
-});
+
+  const good = checked.filter(c => c.status === 'ok').map(c => c.e);
+
+  // Usage accounting — shared by every caller of this engine.
+  usageData.totalTokens += totalTokens;
+  usageData.totalRequests += 1;
+  usageData.history.unshift({
+    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+    tokens: totalTokens, snippet: cleaned.slice(0, 80) + (cleaned.length > 80 ? '...' : ''),
+    file: filePath ? path.basename(filePath) : 'Unknown'
+  });
+  if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
+  saveUsage(usageData);
+  logUsageToCloud({
+    model: lastModelUsed || groq.GROQ_MODEL,
+    tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
+    promptText: cleaned, filePath: filePath || '',
+  });
+
+  return { success: true, edits: good, badCount: bad.length, confidence, reason, tokensUsed: totalTokens, modelUsed: lastModelUsed };
+}
+
+/**
+ * Surgical instruction editor — same idea as computeSearchReplaceEdits, but
+ * for a NATURAL-LANGUAGE instruction ("change the padding from 1.05 to 2")
+ * instead of a literal code snippet to insert. Returns small SEARCH/REPLACE
+ * hunks instead of asking the model to reproduce the entire file.
+ *
+ * This exists because aiCommand's full-file-rewrite approach — ask Groq to
+ * echo back the WHOLE file as one escaped JSON string just to change one
+ * value — is both slow and fragile: a large file means a large response,
+ * which burns through the free-tier per-minute token budget fast (risking
+ * 429s) and is far more likely to come back truncated/malformed (Groq's
+ * strict JSON mode then rejects it outright — "Failed to generate JSON").
+ * A tiny diff avoids both problems, so it's tried FIRST; aiCommand is now
+ * the fallback for requests that genuinely need large new content.
+ */
+async function computeInstructionEdits(instruction, filePath, history) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  const hist = Array.isArray(history) ? history.slice(-8) : [];
+  const historyKey = hist.length ? 'ctx:' + hist.map(h => h.instruction).join('␟') + '|' : '';
+  const cacheKey = 'instredit:' + historyKey + instruction;
+
+  const cached = projectStore.cacheGet(content, cacheKey);
+  if (cached) return { ...cached, cached: true, tokensUsed: 0 };
+
+  const historySection = hist.length
+    ? '\n\nCONVERSATION SO FAR (most recent last, use this to resolve references like "it", "that", "instead of 2", "also do X" in the current instruction):\n' +
+      hist.map((h, i) => {
+        const other = h.filePath && h.filePath !== filePath ? ` (in ${path.basename(h.filePath)})` : '';
+        return `${i + 1}. "${h.instruction}"${other}`;
+      }).join('\n')
+    : '';
+
+  const systemPrompt = `You are a precise code editor. You receive an INSTRUCTION describing a small change, and the FULL current file. Make ONLY the specific change requested, as surgical SEARCH/REPLACE edits — do NOT reproduce the whole file.
+
+STRICT RULES:
+1. Return an "edits" array. Use the FEWEST edits that cleanly express the change.
+2. "search" must be copied VERBATIM from the file below — exact existing text being changed, with just enough surrounding lines to be unique.
+3. "replace" is that same block with ONLY the requested change applied — preserve everything else in it exactly (formatting, unrelated properties, comments, whitespace style).
+4. If the instruction references something from CONVERSATION SO FAR ("it", "instead of 2", "also do X"), use that to identify exactly what it refers to, then find and change that specific thing in the FULL FILE (which already reflects everything previously applied).
+5. If the SAME property/selector/value appears more than once in the file (e.g. "top" set in both a "from" and a "to" block), do NOT pick the first or most obvious match — use every clue in the instruction to find the ONE correct occurrence: the CURRENT value it mentions (an instruction naming "350" or "-350" means the occurrence whose existing value is 350/-350, not one that's already 0), nearby selectors, keyframe/rule names, or ordering (first/last, start/end). If more than one occurrence still fits equally well after that, return an EMPTY "edits" array with a "reason" naming the ambiguity instead of guessing.
+6. If the instruction genuinely requires large new content that can't be expressed as a small edit (e.g. "build a whole new page/game/module from scratch"), return an EMPTY "edits" array — do not guess badly at a huge diff.
+7. Return ONLY valid JSON, no markdown, no commentary.
+
+Response format:
+{
+  "edits": [ { "search": "<exact verbatim block from the file>", "replace": "<that block with the change applied>" } ],
+  "reason": "<one short sentence>",
+  "confidence": <0-100>
+}`;
+
+  const probe = (search) => {
+    const res = applySearchReplace(content, search, search);
+    return res.ok ? 'ok' : res.error;
+  };
+
+  let totalTokens = 0;
+  let lastModelUsed = null;
+
+  const askModel = async (feedback) => {
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      // Large/stable content (the file) first, small/always-different content
+      // (the instruction) last — Groq's automatic prompt caching only reuses
+      // a matching PREFIX, so this ordering is what lets repeated calls
+      // against the same unchanged file reuse the cached file-content tokens
+      // even when the instruction text itself differs each time.
+      { role: 'user', content: `FULL FILE (${path.basename(filePath)}):\n${content}\n\nINSTRUCTION:\n${instruction}${historySection}` }
+    ];
+    if (feedback) messages.push({ role: 'user', content: feedback });
+
+    const aiResult = await callAI(messages, true);
+    if (!aiResult.success) throw new Error(aiResult.error);
+    if (aiResult.modelUsed) lastModelUsed = aiResult.modelUsed;
+    const data = aiResult.data;
+    totalTokens += (data.usage || {}).total_tokens || 0;
+
+    let parsed;
+    try { parsed = JSON.parse(data.choices[0].message.content); }
+    catch (e) { return { edits: [], confidence: 0, reason: '' }; }
+
+    const edits = Array.isArray(parsed.edits)
+      ? parsed.edits.filter(e => e && e.search && e.replace != null).map(e => ({ search: e.search, replace: e.replace }))
+      : [];
+    return { edits, confidence: parsed.confidence == null ? 75 : parsed.confidence, reason: parsed.reason || '' };
+  };
+
+  let { edits, confidence, reason } = await askModel();
+
+  const verify = (list) => list.map((e) => ({ e, status: probe(e.search) }));
+  let checked = verify(edits);
+  let bad = checked.filter(c => c.status !== 'ok');
+
+  let pass = 0;
+  while (bad.length && pass < 2) {
+    pass++;
+    const feedback =
+      `Some "search" blocks from your last answer are wrong. Return the COMPLETE corrected edits array again, fixing these:\n` +
+      bad.map(c => c.status === 'multiple'
+        ? `- Matched MULTIPLE places — include more surrounding lines so it is unique:\n${c.e.search}`
+        : `- NOT found in the file — copy it EXACTLY from the FULL FILE above, character for character:\n${c.e.search}`
+      ).join('\n') +
+      `\nEvery "search" must be copied verbatim from the file shown above.`;
+    const retry = await askModel(feedback);
+    if (retry.edits.length) { edits = retry.edits; confidence = retry.confidence; reason = retry.reason || reason; }
+    checked = verify(edits);
+    bad = checked.filter(c => c.status !== 'ok');
+  }
+
+  const good = checked.filter(c => c.status === 'ok').map(c => c.e);
+
+  usageData.totalTokens += totalTokens;
+  usageData.totalRequests += 1;
+  usageData.history.unshift({
+    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+    tokens: totalTokens, snippet: instruction.slice(0, 80), file: path.basename(filePath)
+  });
+  if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
+  saveUsage(usageData);
+  logUsageToCloud({
+    model: lastModelUsed || groq.GROQ_MODEL,
+    tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
+    promptText: instruction, filePath,
+  });
+
+  const payload = { success: true, edits: good, badCount: bad.length, confidence, reason, tokensUsed: totalTokens, modelUsed: lastModelUsed };
+  // Cache the outcome even when it's partial or empty — at temperature 0 a
+  // retry of the identical instruction against identical file content is
+  // very likely to hit the same ambiguity and produce the same result, so
+  // there's no reason to re-spend the (often multi-call, self-correcting)
+  // surgical-edit attempt on every retry. An empty edits[] still correctly
+  // sends the caller straight to the aiCommand fallback, just without
+  // re-paying for this step first.
+  projectStore.cacheSet(content, cacheKey, payload, filePath);
+  return payload;
+}
 
 // Apply ONE search/replace edit to a string. Exact match first, then
 // whitespace-tolerant (ignore leading/trailing space, then collapse internal
@@ -1794,6 +1912,22 @@ function applySearchReplace(fileContent, searchBlock, replaceBlock) {
   return { ok: true, content: fileContent.slice(0, startChar) + reindented + fileContent.slice(endChar) };
 }
 
+// Apply an ordered list of verified {search, replace} hunks to file content,
+// all-or-nothing (pure — no disk write). Returns { ok:true, content } or
+// { ok:false, error:'notfound'|'multiple'|'empty', index }. Shared by the
+// on-disk apply handler and the in-memory merge preview so both use the exact
+// same precise placement result.
+function applyEditsToContent(fileContent, edits) {
+  let working = (fileContent || '').replace(/\r\n/g, '\n');
+  for (let i = 0; i < edits.length; i++) {
+    const { search, replace } = edits[i];
+    const res = applySearchReplace(working, search, replace);
+    if (!res.ok) return { ok: false, error: res.error, index: i };
+    working = res.content;
+  }
+  return { ok: true, content: working };
+}
+
 // Normalize any analyze result (AI edits[], legacy search/replace, offline
 // anchor, rewrite, delete, append) into a single shape the loop understands.
 function normalizeToEdits(r, aiPatch) {
@@ -1860,6 +1994,11 @@ ipcMain.handle('snippet:apply-to-file', async (_, { filePath, aiPatch, result: r
       return { success: false, error: 'Target file path does not exist or is inaccessible.' };
     }
 
+    const limit = await checkApplyLimit();
+    if (!limit.allowed) {
+      return { success: false, error: `Daily apply limit reached (${limit.count}/${limit.limit}). Try again tomorrow.` };
+    }
+
     const r = resultObj || (typeof aiPatch === 'object' ? aiPatch : null);
     const plan = normalizeToEdits(r, aiPatch);
     if (!plan) return { success: false, error: 'No patch data received.' };
@@ -1868,9 +2007,12 @@ ipcMain.handle('snippet:apply-to-file', async (_, { filePath, aiPatch, result: r
 
     // Atomic write: write to a temp file then rename over the original.
     const commit = (content) => {
+      // File history (Task 3): snapshot the pre-edit version so it's revertable.
+      projectStore.saveSnapshot(filePath);
       const tmp = filePath + '.__codeply_tmp';
       fs.writeFileSync(tmp, content, 'utf8');
       fs.renameSync(tmp, filePath);
+      recordApplyEvent(filePath);   // counts toward the daily cap (fire-and-forget)
       // Bring the Codeply popup back to front after stealing focus for Ctrl+S
       if (popupWindow && !popupWindow.isDestroyed()) popupWindow.focus();
     };
@@ -1901,24 +2043,19 @@ ipcMain.handle('snippet:apply-to-file', async (_, { filePath, aiPatch, result: r
     // ── One or more surgical edits — ALL-OR-NOTHING ──
     if (!plan.edits.length) return { success: false, error: 'No edits to apply.' };
 
-    let working = original.replace(/\r\n/g, '\n');
-    for (let i = 0; i < plan.edits.length; i++) {
-      const { search, replace } = plan.edits[i];
-      const res = applySearchReplace(working, search, replace);
-      if (!res.ok) {
-        const label = plan.edits.length > 1 ? `Change ${i + 1} of ${plan.edits.length}` : 'The change';
-        const why = res.error === 'multiple'
-          ? 'matches more than one place, ask the AI to include a few more surrounding lines so the target is unique'
-          : res.error === 'empty'
-            ? 'had an empty search block'
-            : "wasn't found in the file. It may have changed since the AI read it, so re-analyze";
-        // Nothing is written: the file is left exactly as it was (no half-applied mess).
-        return { success: false, error: `${label} ${why}. No changes were written.` };
-      }
-      working = res.content;
+    const applied = applyEditsToContent(original, plan.edits);
+    if (!applied.ok) {
+      const label = plan.edits.length > 1 ? `Change ${applied.index + 1} of ${plan.edits.length}` : 'The change';
+      const why = applied.error === 'multiple'
+        ? 'matches more than one place, ask the AI to include a few more surrounding lines so the target is unique'
+        : applied.error === 'empty'
+          ? 'had an empty search block'
+          : "wasn't found in the file. It may have changed since the AI read it, so re-analyze";
+      // Nothing is written: the file is left exactly as it was (no half-applied mess).
+      return { success: false, error: `${label} ${why}. No changes were written.` };
     }
 
-    commit(working);
+    commit(applied.content);
     return {
       success: true,
       msg: plan.edits.length > 1 ? `Applied ${plan.edits.length} changes cleanly.` : 'Surgical patch applied cleanly.'
@@ -2095,15 +2232,8 @@ ipcMain.handle('auth:sign-out', async () => {
   if (!supabase) return { success: false };
   try {
     await supabase.auth.signOut();
-    // Clear user identity AND wipe the API key locally — it lives in the cloud,
-    // so the next user who logs in gets their own key, not the previous user's.
-    // Wipe ALL account-specific settings so the next user gets a clean slate.
+    // Clear the user identity — AI works via the built-in engine either way.
     savedSettings.user = null;
-    savedSettings.apiKey = '';
-    savedSettings.modelRanking = [];
-    savedSettings.provider = 'openrouter';
-    savedSettings.model = '';
-    savedSettings.tokenCap = 0;
     persistSettings();
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
@@ -2115,8 +2245,6 @@ ipcMain.handle('auth:get-session', async () => {
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session) return null;
-    // Restore cloud settings every time the session is resumed (app restart / re-open)
-    await fetchCloudSettings(session.user.id);
     return sessionUserFromAuth(session.user);
   } catch { return null; }
 });
@@ -2142,6 +2270,10 @@ ipcMain.handle('subscription:check', async () => {
   }
 });
 
+// Dashboard's Subscription page usage bar — same count the apply handlers
+// enforce against, exposed read-only for display.
+ipcMain.handle('apply-limit:get', async () => checkApplyLimit());
+
 ipcMain.handle('file:browse', async () => {
   const { dialog } = require('electron');
   const result = await dialog.showOpenDialog(popupWindow, {
@@ -2159,6 +2291,177 @@ ipcMain.handle('file:read', (_, filePath) => {
     if (!fs.existsSync(filePath)) return null;
     return { content: fs.readFileSync(filePath, 'utf8'), name: path.basename(filePath) };
   } catch (e) { return null; }
+});
+
+// ─── Task 4: intelligent file detection & multi-file placement ─────────────────
+
+/** Project info for the popup UI: watched root + detected framework badge. */
+ipcMain.handle('project:info', () => {
+  const ready = projectStore.isReady();
+  let framework = null;
+  if (ready) {
+    try { framework = fileDetect.primaryFramework(fileDetect.detectFrameworks(projectStore.getRoot())); }
+    catch { }
+  }
+  return { ready, root: ready ? projectStore.getRoot() : null, framework };
+});
+
+/**
+ * Regex-only "did the user explicitly name a file?" check — no AI, no grep,
+ * works even fully offline. Used by the Write box so "in main.py, make a
+ * flappy bird game" targets main.py deterministically before anything else runs.
+ */
+ipcMain.handle('hint:file', (_, { text }) => {
+  if (!projectStore.isReady()) return null;
+  try {
+    const root = projectStore.getRoot();
+    const hint = fileDetect.extractFileHint(text || '', root);
+    if (!hint) return null;
+    return { path: hint.path, absPath: path.join(root, hint.path), mentioned: hint.mentioned };
+  } catch { return null; }
+});
+
+/** AI-powered "which file(s) does this code belong to?" (cached). */
+ipcMain.handle('detect:files', async (_, { code }) => {
+  const snippet = cleanSnippet(code || '') || (code || '').trim();
+  if (!snippet) return { success: false, error: 'Nothing to detect.' };
+  if (!projectStore.isReady()) return { success: false, error: 'Pick a project folder (Watch) first.' };
+  if (!groq.isConfigured()) return { success: false, error: 'AI engine unavailable', offline: true };
+  try {
+    const res = await fileDetect.detectTargetFiles(snippet);
+    if (res.success && res.tokensUsed) {
+      usageData.totalTokens += res.tokensUsed;
+      usageData.totalRequests += 1;
+      saveUsage(usageData);
+    }
+    return res;
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+/**
+ * Smart merge (Task 4): AI-merge new code into a file, preserving everything
+ * the snippet doesn't touch. For new files there is nothing to merge.
+ * Returns { success, original, merged, conflict, reason, cached }.
+ */
+ipcMain.handle('merge:smart', async (_, { filePath, code }) => {
+  try {
+    // Strip markdown fences / chat prose so only real code lands in files.
+    const snippet = cleanSnippet(code || '') || (code || '').trim();
+    if (!snippet) return { success: false, error: 'Nothing to merge.' };
+    const exists = filePath && fs.existsSync(filePath);
+    const original = exists ? fs.readFileSync(filePath, 'utf8') : '';
+    if (!exists || !original.trim()) {
+      return { success: true, original: '', merged: snippet, conflict: false, reason: 'New file, full content.' };
+    }
+    if (!groq.isConfigured()) return { success: false, error: 'AI engine unavailable' };
+
+    // Cached under the SAME namespace the popup's own Analyze uses — a prior
+    // Analyze on this exact file + snippet is reused here instantly.
+    const cachedPayload = projectStore.cacheGet(original, 'analyze:' + snippet);
+    if (cachedPayload && cachedPayload.result && Array.isArray(cachedPayload.result.edits) && cachedPayload.result.edits.length) {
+      const applied = applyEditsToContent(original, cachedPayload.result.edits);
+      if (applied.ok) {
+        return { success: true, original, merged: applied.content, conflict: false, reason: cachedPayload.result.reason || 'Cached placement.', cached: true };
+      }
+    }
+
+    // Primary path: the SAME exact-line SEARCH/REPLACE engine the popup's own
+    // Analyze uses — finds the precise block to change, or the closest
+    // existing anchor to insert new code near, verified against the real
+    // file with self-correcting retries. Only a hard AI failure falls through.
+    let edits = null, confidence = 0, reason = '', badCount = 0;
+    try {
+      const computed = await computeSearchReplaceEdits(snippet, original, filePath);
+      if (computed.edits.length) {
+        edits = computed.edits; confidence = computed.confidence; reason = computed.reason; badCount = computed.badCount;
+      }
+    } catch { /* fall through to full-file merge below */ }
+
+    if (edits) {
+      const applied = applyEditsToContent(original, edits);
+      if (applied.ok) {
+        if (!badCount) {
+          projectStore.cacheSet(original, 'analyze:' + snippet, { success: true, result: { action: 'edits', edits, reason, confidence } }, filePath);
+        }
+        return { success: true, original, merged: applied.content, conflict: false, reason: reason || 'Precise placement, verified against the file.', cached: false };
+      }
+    }
+
+    // Fallback: the snippet doesn't resemble anything precise in the file yet
+    // (e.g. a brand-new section with no similar anchor) — full-file AI merge.
+    const r = await fileDetect.smartMerge(filePath, original, snippet);
+    if (!r.success) return r;
+    if (r.tokensUsed) {
+      usageData.totalTokens += r.tokensUsed;
+      usageData.totalRequests += 1;
+      saveUsage(usageData);
+    }
+    return { success: true, original, merged: r.merged, conflict: r.conflict, reason: r.reason, cached: !!r.cached };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+/**
+ * Apply full new contents to a set of files in one click (multi-file apply).
+ * Every existing file is snapshotted first; new files get their folders
+ * created. Only paths inside the watched project are allowed.
+ */
+ipcMain.handle('multi:apply', async (_, { files }) => {
+  if (!Array.isArray(files) || !files.length) return { success: false, error: 'No files to apply.' };
+  const root = projectStore.getRoot();
+  const results = [];
+  await forceEditorSave();
+
+  // One file written = one apply toward the daily cap, so a big batch can't
+  // blow straight past it. Check once up front, then track a running local
+  // tally as files land so a batch stops exactly at the limit instead of
+  // over- or under-shooting it.
+  const limit = await checkApplyLimit();
+  if (!limit.allowed) {
+    return { success: false, error: `Daily apply limit reached (${limit.count}/${limit.limit}). Try again tomorrow.` };
+  }
+  let usedSoFar = limit.count;
+
+  for (const f of files) {
+    try {
+      if (!f || !f.path || typeof f.content !== 'string') {
+        results.push({ path: f?.path || '?', success: false, error: 'Invalid entry.' });
+        continue;
+      }
+      if (usedSoFar >= limit.limit) {
+        results.push({ path: f.path, success: false, error: 'Daily apply limit reached.' });
+        continue;
+      }
+      const abs = path.isAbsolute(f.path) ? f.path : path.join(root || '', f.path);
+      // Multi-file writes are detection-driven — keep them inside the project.
+      if (!root || path.relative(root, abs).startsWith('..')) {
+        results.push({ path: f.path, success: false, error: 'Outside the watched project.' });
+        continue;
+      }
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      projectStore.saveSnapshot(abs);                 // no-op for new files
+      const tmp = abs + '.__codeply_tmp';
+      fs.writeFileSync(tmp, f.content, 'utf8');
+      fs.renameSync(tmp, abs);
+      recordApplyEvent(abs);
+      usedSoFar++;
+      results.push({ path: path.relative(root, abs), success: true });
+    } catch (e) {
+      results.push({ path: f?.path || '?', success: false, error: e.message });
+    }
+  }
+  if (popupWindow && !popupWindow.isDestroyed()) popupWindow.focus();
+  return { success: results.some(r => r.success), results };
+});
+
+// ─── Task 3: file history (revert UI) ──────────────────────────────────────────
+
+ipcMain.handle('history:snapshots', (_, filePath) => projectStore.listSnapshots(filePath));
+
+ipcMain.handle('history:revert', async (_, { filePath, snapshotName }) => {
+  await forceEditorSave();
+  const res = projectStore.revertToSnapshot(filePath, snapshotName);
+  if (res.success && popupWindow && !popupWindow.isDestroyed()) popupWindow.focus();
+  return res;
 });
 
 // ─── Startup-entry cleanup ──────────────────────────────────────────────────────
@@ -2190,6 +2493,10 @@ function cleanupStrayStartupEntries() {
 // ─── App Boot ──────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // Surface the missing-key developer error at startup (console only — the
+  // user-facing app keeps working via offline fallbacks).
+  groq.isConfigured();
+
   // Launch-at-login: ONLY register the real packaged Codeply build.
   // Running `electron .` in dev would otherwise register electron.exe itself,
   // which is why a stray "Electron" entry showed up in Startup apps.
@@ -2209,6 +2516,10 @@ app.whenReady().then(async () => {
   createDashboardWindow();
   createTray();
   await flushPendingAuthCallback();
+
+  // "Codeply is alive" side popup (Task 2) — every startup, non-intrusive.
+  // Skipped forever once the user clicks "don't show this again".
+  if (!savedSettings.aliveNotificationDisabled) showAliveNotification(UI_ROOT);
 
   startClipboardWatch();   // code-only clipboard sync every 10s
   startFolderWatch();      // auto-detect the file you're editing

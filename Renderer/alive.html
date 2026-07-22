@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Codeply</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+    html, body { height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    body { display: flex; align-items: center; justify-content: flex-end; }
+
+    .alive {
+      display: flex; flex-direction: column; gap: 8px;
+      width: 330px; padding: 13px 15px 11px; margin-right: 6px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      box-shadow: var(--sh-lg);
+      position: relative;
+      /* slides in from the right edge, springs to rest */
+      transform: translateX(110%);
+      transition: transform .45s cubic-bezier(.22, 1.1, .36, 1), opacity .3s ease;
+    }
+    .alive.in { transform: translateX(0); }
+    .alive.out { transform: translateX(110%); opacity: 0; }
+
+    .alive-main { display: flex; align-items: center; gap: 12px; }
+    .alive-main img { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; }
+
+    .alive-body { flex: 1; min-width: 0; padding-right: 14px; }
+    .alive-title { font-size: .88rem; font-weight: 800; color: var(--ink); letter-spacing: -.01em; }
+    .alive-sub { font-size: .72rem; color: var(--ink-2); margin-top: 3px; line-height: 1.45; }
+    .kbd {
+      font-family: var(--mono); font-size: .62rem; font-weight: 700;
+      background: var(--surface-2); border: 1px solid var(--line);
+      border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px;
+      color: var(--ink); white-space: nowrap;
+    }
+
+    /* Subtle close button — blends into the card, top-right corner */
+    .alive-close {
+      position: absolute; top: 7px; right: 7px;
+      width: 20px; height: 20px; border-radius: 6px;
+      background: transparent; border: none; cursor: pointer; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--ink-3); transition: background .15s, color .15s;
+    }
+    .alive-close:hover { background: var(--surface-2); color: var(--ink); }
+    .alive-close svg { width: 10px; height: 10px; }
+
+    /* "Don't show again" footer row */
+    .alive-foot {
+      display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+      border-top: 1px solid var(--line-2); padding-top: 7px;
+    }
+    .alive-foot-text { font-size: .62rem; color: var(--ink-3); }
+    .alive-foot-btn {
+      height: 20px; padding: 0 10px; border-radius: var(--r-pill);
+      border: 1px solid var(--line); background: var(--surface-2);
+      color: var(--ink-2); font-family: var(--sans); font-size: .62rem; font-weight: 700;
+      cursor: pointer; transition: all .15s;
+    }
+    .alive-foot-btn:hover { background: var(--blue-tint); border-color: var(--blue-tint2); color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="alive" id="alive">
+    <button class="alive-close" id="closeBtn" title="Close">
+      <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/>
+      </svg>
+    </button>
+    <div class="alive-main">
+      <img src="../logos/Logo.png" alt="Codeply">
+      <div class="alive-body">
+        <div class="alive-title">Codeply is alive!</div>
+        <div class="alive-sub" id="aliveSub"></div>
+      </div>
+    </div>
+    <div class="alive-foot">
+      <span class="alive-foot-text">Don't wanna see this notification again?</span>
+      <button class="alive-foot-btn" id="neverBtn">Yes</button>
+    </div>
+  </div>
+
+  <script>
+    // Shortcut text is passed by main via the query string (OS-aware).
+    const params = new URLSearchParams(location.search);
+    const shortcut = params.get('shortcut') || 'Ctrl + C';
+    document.getElementById('aliveSub').innerHTML =
+      'Press <span class="kbd">' + shortcut.split('+').map(s => s.trim()).join('</span> + <span class="kbd">') + '</span> to open it';
+
+    const card = document.getElementById('alive');
+    requestAnimationFrame(() => requestAnimationFrame(() => card.classList.add('in')));
+
+    let closed = false;
+    function dismiss() {
+      if (closed) return;
+      closed = true;
+      card.classList.remove('in');
+      card.classList.add('out');
+      setTimeout(() => window.close(), 350);
+    }
+
+    // Stays on screen until the user closes it — no auto-dismiss.
+    document.getElementById('closeBtn').addEventListener('click', dismiss);
+
+    // "Yes" = never show this notification again (persisted via settings).
+    document.getElementById('neverBtn').addEventListener('click', () => {
+      try { window.codeply?.saveSettings({ aliveNotificationDisabled: true }); } catch { }
+      dismiss();
+    });
+  </script>
+</body>
+</html>
