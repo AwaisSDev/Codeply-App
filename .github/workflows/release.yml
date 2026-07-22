@@ -12,14 +12,18 @@ on:
 permissions:
   contents: write
 
-# Each OS job only BUILDS and uploads its artifact to the workflow run — it
-# does NOT publish a GitHub release itself. Two parallel jobs each running
-# `electron-builder --publish always` for the same tag is a race: both check
-# "does a release for this tag exist yet" before either has created one, so
-# both create a SEPARATE release (one with just the .exe, one with just the
-# .dmg) instead of one finding the other's release and adding to it. The
-# `release` job below waits for both builds (`needs:`) and creates exactly
-# one release with both assets attached.
+# Both jobs use electron-builder's own `--publish always`, which is what
+# correctly generates AND uploads latest.yml/latest-mac.yml — the metadata
+# electron-updater reads to detect new versions. (An earlier version of this
+# workflow split build and publish into separate steps to dodge a race
+# between the two OS jobs, but that meant nobody ever generated/uploaded
+# those .yml files, silently breaking auto-update — 404 on latest.yml.)
+#
+# The actual fix for the race is just running build-mac AFTER build-windows
+# (`needs:`) instead of in parallel: two `--publish always` calls for the
+# same tag running at once can both decide "no release exists yet" before
+# either has created one, so both create a SEPARATE release. Sequenced, the
+# second call finds the first job's release and adds its assets to it.
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -34,16 +38,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Windows
-        run: npx electron-builder --win --publish never
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build
-          path: dist/Codeply-Setup.exe
+      - name: Build & publish Windows
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx electron-builder --win --publish always
 
   build-mac:
+    needs: build-windows
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,35 +57,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Mac
-        run: npx electron-builder --mac --publish never
-
-      - name: Upload Mac artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-build
-          path: dist/Codeply.dmg
-
-  release:
-    needs: [build-windows, build-mac]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-build
-          path: dist
-
-      - name: Download Mac artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mac-build
-          path: dist
-
-      - name: Create release with both assets
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GH_TOKEN }}
-          files: |
-            dist/Codeply-Setup.exe
-            dist/Codeply.dmg
+      - name: Build & publish Mac
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx electron-builder --mac --publish always
