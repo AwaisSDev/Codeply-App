@@ -5,6 +5,14 @@ on:
     tags:
       - 'v*'
 
+# Each OS job only BUILDS and uploads its artifact to the workflow run — it
+# does NOT publish a GitHub release itself. Two parallel jobs each running
+# `electron-builder --publish always` for the same tag is a race: both check
+# "does a release for this tag exist yet" before either has created one, so
+# both create a SEPARATE release (one with just the .exe, one with just the
+# .dmg) instead of one finding the other's release and adding to it. The
+# `release` job below waits for both builds (`needs:`) and creates exactly
+# one release with both assets attached.
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -20,9 +28,13 @@ jobs:
         run: npm install
 
       - name: Build Windows
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/Codeply-Setup.exe
 
   build-mac:
     runs-on: macos-latest
@@ -38,6 +50,35 @@ jobs:
         run: npm install
 
       - name: Build Mac
+        run: npx electron-builder --mac --publish never
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: dist/Codeply.dmg
+
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: dist
+
+      - name: Download Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-build
+          path: dist
+
+      - name: Create release with both assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Codeply-Setup.exe
+            dist/Codeply.dmg
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npx electron-builder --mac --publish always
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
