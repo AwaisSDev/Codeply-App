@@ -493,13 +493,14 @@ function friendlyError(raw) {
   // from a short per-minute burst limit, since "wait a moment" is actively
   // misleading for the former.
   if (s.includes('tokens per day') || s.includes(' tpd') || s.includes('daily'))
-    return { title: 'Daily limit reached', msg: 'The free AI quota for today is used up. It resets daily, try again later or upgrade at console.groq.com.' };
+    return { title: 'Daily limit reached', msg: 'The daily AI quota is used up for today. It resets at midnight UTC.' };
   if (s.includes('rate limit') || s.includes('ratelimit') || s.includes('too many request') || s.includes('429') || s.includes('tokens per minute') || s.includes(' tpm'))
     return { title: 'Rate limited', msg: 'Too many requests right now, wait a minute and try again.' };
 
-  // ② AI engine unavailable (missing env key — details are in the app console only)
-  if (s.includes('ai engine unavailable'))
-    return { title: 'AI unavailable', msg: 'Smart placement is temporarily off, offline placement was used instead.' };
+  // ② Not signed in — AI features require an authenticated session (the app
+  // has no key of its own, see lib/groq.js).
+  if (s.includes('sign in'))
+    return { title: 'Sign in required', msg: 'Sign in from the dashboard to use AI-powered placement. Offline placement was used instead.' };
 
   // ③ Timeout
   if (s.includes('timeout') || s.includes('timed out') || s.includes('etimedout'))

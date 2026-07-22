@@ -22,9 +22,6 @@ const { showAliveNotification } = require('./lib/notifier'); // startup popup (T
 const projectStore = require('./lib/project-store');      // .codeply cache/history (Task 3)
 const fileDetect = require('./lib/file-detect');          // auto file detection (Task 4)
 
-// Dev convenience only — packaged builds read GROQ_API_KEY from the real env.
-groq.loadDotEnv(__dirname);
-
 // ─── Supabase Config ───────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://zswkhfkfseclgadhvobg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpzd2toZmtmc2VjbGdhZGh2b2JnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMzYyOTgsImV4cCI6MjA5NTgxMjI5OH0.EoTQdIGQQDrN1uEqQfya3VmrQMT68jkzPLphbLwNTWg';
@@ -85,6 +82,13 @@ async function initSupabase() {
       realtime: { transport: ws }
     });
     console.log('[Supabase] Initialized');
+
+    // Keep lib/groq.js's session in sync so its (synchronous) isConfigured()
+    // check and its (async) proxy calls always use a live token — this
+    // fires on sign-in, sign-out, AND automatic token refresh.
+    supabase.auth.onAuthStateChange((_event, session) => groq.setSession(session));
+    const { data: { session: initialSession } } = await supabase.auth.getSession();
+    groq.setSession(initialSession);
   } catch (e) {
     console.error('[Supabase] Init error:', e.message);
   }
@@ -128,7 +132,7 @@ async function logUsageToCloud({ model, tokensIn, tokensOut, tokensTotal, prompt
   } catch (e) { console.warn('[Cloud] history log failed:', e.message); }
 }
 
-// ── Daily apply limit (500 applies/day/user) ────────────────────────────────
+// ── Daily apply limit (100 applies/day/user) ────────────────────────────────
 // Counts each successful FILE WRITE (a multi-file apply counts once per file,
 // not once per click — otherwise one big batch could blow straight past the
 // cap). Signed-in users are checked against Supabase (apply_history table +
@@ -136,7 +140,7 @@ async function logUsageToCloud({ model, tokensIn, tokensOut, tokensTotal, prompt
 // server-side count for that account, not per-device). A guest with no
 // session falls back to a local dated counter — not tamper-proof, but
 // consistent with how this app already treats local-only state elsewhere.
-const DAILY_APPLY_LIMIT = 500;
+const DAILY_APPLY_LIMIT = 100;
 const applyCountPath = path.join(app.getPath('userData'), 'codeply-apply-count.json');
 
 function loadLocalApplyCount() {
@@ -201,9 +205,10 @@ async function pushReferralSource(userId, referralSource) {
   } catch (e) { console.warn('[Cloud] pushReferralSource error:', e.message); }
 }
 
-// ── AI call engine — Groq only (Task 1) ───────────────────────────────────────
-// The single AI provider. Key comes from the GROQ_API_KEY env var; there is no
-// model selection anywhere in the app. Plug and play.
+// ── AI call engine — proxied through Supabase (see lib/groq.js) ───────────────
+// No key lives in this app; the signed-in user's session authenticates every
+// call to the ai-proxy edge function instead. There is no model selection
+// anywhere in the app — plug and play, sign-in required.
 async function callAI(messages, expectJson = true) {
   return groq.chat(messages, { json: expectJson });
 }
@@ -437,9 +442,10 @@ async function checkUiUpdate() {
 }
 
 // ─── Config & Usage Persistence ───────────────────────────────────────────────
-// Model/provider/API-key settings are gone — the AI engine is built in (Groq
-// via the GROQ_API_KEY env var). Legacy key fields from old installs are
-// stripped on load so no stale ciphertext lingers on disk.
+// Model/provider/API-key settings are gone — the AI engine is built in and
+// proxied through Supabase, authenticated by the signed-in session (see
+// lib/groq.js). Legacy key fields from old installs are stripped on load so
+// no stale ciphertext lingers on disk.
 
 function loadSettings() {
   try {
@@ -1304,7 +1310,7 @@ function localCommand(instruction, filePath) {
   }
 
   // add / change / refactor etc. can't be done reliably offline.
-  return { action: 'none', reason: 'This edit needs the AI engine, which is unavailable right now (GROQ_API_KEY not set).', confidence: 15, code: '' };
+  return { action: 'none', reason: 'This edit needs the AI engine — sign in to use it.', confidence: 15, code: '' };
 }
 
 // ─── AI Command (full edit via LLM) ─────────────────────────────────────────────
@@ -1386,9 +1392,10 @@ Response format:
       const aiResult = await callAI(messages, true);
       if (!aiResult.success) {
         lastError = aiResult.error;
-        // Rate-limited (and the OpenRouter fallback, if any, already tried
-        // and also failed inside groq.chat) — retrying here is guaranteed to
-        // fail the same way. Stop immediately instead of burning 2 more calls.
+        // Rate-limited (the ai-proxy edge function already tried its own
+        // OpenRouter fallback and that also failed) — retrying here is
+        // guaranteed to fail the same way. Stop immediately instead of
+        // burning 2 more calls.
         if (groq.isRateLimitError(lastError)) break;
         continue;
       }
@@ -1407,13 +1414,13 @@ Response format:
       usageData.totalTokens += totalTokens;
       usageData.totalRequests += 1;
       usageData.history.unshift({
-        id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+        id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || 'unknown',
         tokens: totalTokens, snippet: instruction.slice(0, 80), file: path.basename(filePath)
       });
       if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
       saveUsage(usageData);
       logUsageToCloud({
-        model: lastModelUsed || groq.GROQ_MODEL,
+        model: lastModelUsed || 'unknown',
         tokensIn: usg.prompt_tokens || 0,
         tokensOut: usg.completion_tokens || 0,
         tokensTotal: totalTokens,
@@ -1463,7 +1470,7 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, forceInstruction, 
   // this way, bypassing the narrow verb-based heuristic — the user explicitly
   // wrote this with intent, unlike ambient clipboard text that needs filtering.
   if (forceInstruction || looksLikeInstruction(raw)) {
-    // No AI engine (GROQ_API_KEY missing) → offline command interpreter.
+    // Not signed in → offline command interpreter.
     if (!groq.isConfigured()) {
       return { success: true, result: localCommand(raw, filePath), tokensUsed: 0, local: true };
     }
@@ -1495,10 +1502,11 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, forceInstruction, 
         // No usable edits — either the model decided this needs large new
         // content, or nothing could be anchored. Fall through to a rewrite.
       } catch (e) {
-        // Rate-limited (OpenRouter fallback already tried inside groq.chat
-        // and also failed) — aiCommand would just hit the exact same wall on
-        // its very next call. Fail fast instead of wasting another
-        // round-trip (and its own retry loop) on a doomed request.
+        // Rate-limited (the ai-proxy edge function already tried its own
+        // OpenRouter fallback and that also failed) — aiCommand would just
+        // hit the exact same wall on its very next call. Fail fast instead
+        // of wasting another round-trip (and its own retry loop) on a
+        // doomed request.
         if (groq.isRateLimitError(e.message)) return { success: false, error: e.message };
         console.warn('[instruction] surgical edit attempt failed, falling back to full rewrite:', e.message);
       }
@@ -1510,7 +1518,7 @@ ipcMain.handle('snippet:analyze', async (_, { code, filePath, forceInstruction, 
   // ── Code snippet → placement. Clean off any AI prose/fences first. ──
   const cleaned = cleanSnippet(raw) || raw;
 
-  // No AI engine available? Fall back to local heuristic.
+  // Not signed in? Fall back to local heuristic.
   if (!groq.isConfigured()) {
     return { success: true, result: localAnalyze(cleaned, filePath), tokensUsed: 0, local: true };
   }
@@ -1676,14 +1684,14 @@ Response format:
   usageData.totalTokens += totalTokens;
   usageData.totalRequests += 1;
   usageData.history.unshift({
-    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || 'unknown',
     tokens: totalTokens, snippet: cleaned.slice(0, 80) + (cleaned.length > 80 ? '...' : ''),
     file: filePath ? path.basename(filePath) : 'Unknown'
   });
   if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
   saveUsage(usageData);
   logUsageToCloud({
-    model: lastModelUsed || groq.GROQ_MODEL,
+    model: lastModelUsed || 'unknown',
     tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
     promptText: cleaned, filePath: filePath || '',
   });
@@ -1804,13 +1812,13 @@ Response format:
   usageData.totalTokens += totalTokens;
   usageData.totalRequests += 1;
   usageData.history.unshift({
-    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || groq.GROQ_MODEL,
+    id: Date.now(), timestamp: new Date().toISOString(), model: lastModelUsed || 'unknown',
     tokens: totalTokens, snippet: instruction.slice(0, 80), file: path.basename(filePath)
   });
   if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
   saveUsage(usageData);
   logUsageToCloud({
-    model: lastModelUsed || groq.GROQ_MODEL,
+    model: lastModelUsed || 'unknown',
     tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
     promptText: instruction, filePath,
   });
@@ -2326,7 +2334,7 @@ ipcMain.handle('detect:files', async (_, { code }) => {
   const snippet = cleanSnippet(code || '') || (code || '').trim();
   if (!snippet) return { success: false, error: 'Nothing to detect.' };
   if (!projectStore.isReady()) return { success: false, error: 'Pick a project folder (Watch) first.' };
-  if (!groq.isConfigured()) return { success: false, error: 'AI engine unavailable', offline: true };
+  if (!groq.isConfigured()) return { success: false, error: 'Sign in to use AI features.', offline: true };
   try {
     const res = await fileDetect.detectTargetFiles(snippet);
     if (res.success && res.tokensUsed) {
@@ -2353,7 +2361,7 @@ ipcMain.handle('merge:smart', async (_, { filePath, code }) => {
     if (!exists || !original.trim()) {
       return { success: true, original: '', merged: snippet, conflict: false, reason: 'New file, full content.' };
     }
-    if (!groq.isConfigured()) return { success: false, error: 'AI engine unavailable' };
+    if (!groq.isConfigured()) return { success: false, error: 'Sign in to use AI features.' };
 
     // Cached under the SAME namespace the popup's own Analyze uses — a prior
     // Analyze on this exact file + snippet is reused here instantly.
@@ -2493,10 +2501,6 @@ function cleanupStrayStartupEntries() {
 // ─── App Boot ──────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
-  // Surface the missing-key developer error at startup (console only — the
-  // user-facing app keeps working via offline fallbacks).
-  groq.isConfigured();
-
   // Launch-at-login: ONLY register the real packaged Codeply build.
   // Running `electron .` in dev would otherwise register electron.exe itself,
   // which is why a stray "Electron" entry showed up in Startup apps.

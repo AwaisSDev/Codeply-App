@@ -1498,7 +1498,7 @@
           <div class="usage-limit-wrap" id="usageLimitWrap">
             <div class="usage-limit-head">
               <span class="usage-limit-label">Daily applies</span>
-              <span class="usage-limit-count" id="usageLimitCount">0 / 500</span>
+              <span class="usage-limit-count" id="usageLimitCount">0 / 100</span>
             </div>
             <div class="usage-limit-track">
               <div class="usage-limit-fill" id="usageLimitFill"></div>
@@ -1688,7 +1688,7 @@
         subscription: {
           async check() { return { allowed: true, reason: 'ok', plan: 'free' }; }
         },
-        async getApplyLimit() { return { allowed: true, count: 128, limit: 500 }; }
+        async getApplyLimit() { return { allowed: true, count: 42, limit: 100 }; }
       };
     }
   </script>

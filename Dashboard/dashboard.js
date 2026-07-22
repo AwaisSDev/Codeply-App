@@ -965,7 +965,7 @@ function renderSubscriptionPage() {
   renderUsageLimitBar();
 }
 
-// Daily apply usage (500/day cap) — same count main.js enforces against,
+// Daily apply usage (100/day cap) — same count main.js enforces against,
 // shown read-only here. Works for guests too (local counter fallback).
 async function renderUsageLimitBar() {
   const countEl = document.getElementById('usageLimitCount');
@@ -974,7 +974,7 @@ async function renderUsageLimitBar() {
   try {
     const limit = await window.codeply.getApplyLimit();
     const count = limit?.count || 0;
-    const cap = limit?.limit || 500;
+    const cap = limit?.limit || 100;
     const pct = Math.min(100, (count / cap) * 100);
     countEl.textContent = `${formatNum(count)} / ${formatNum(cap)}`;
     fillEl.style.width = pct + '%';

@@ -85,7 +85,7 @@
   <script>
     // Shortcut text is passed by main via the query string (OS-aware).
     const params = new URLSearchParams(location.search);
-    const shortcut = params.get('shortcut') || 'Ctrl + C';
+    const shortcut = params.get('shortcut') || 'Alt + C';
     document.getElementById('aliveSub').innerHTML =
       'Press <span class="kbd">' + shortcut.split('+').map(s => s.trim()).join('</span> + <span class="kbd">') + '</span> to open it';
 

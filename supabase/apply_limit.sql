@@ -1,10 +1,10 @@
 -- ============================================================
---  Codeply — Daily Apply Limit (500 applies / user / UTC day)
+--  Codeply — Daily Apply Limit (100 applies / user / UTC day)
 --  Run this in Supabase → SQL Editor (one time).
 --
 --  Counts each successful file write (single-file apply = 1 row,
 --  multi-file apply = 1 row per file written), so a signed-in user
---  can apply at most 500 changes per day. Enforced in main.js right
+--  can apply at most 100 changes per day. Enforced in main.js right
 --  before each write; this table is what it checks against.
 -- ============================================================
 
