@@ -195,14 +195,15 @@ async function recordApplyEvent(filePath) {
 
 // ── Cloud settings ─────────────────────────────────────────────────────────────
 // API keys and model settings no longer sync to the cloud — the AI engine is
-// built in (Groq via env). Only the referral source is still recorded.
+// built in (Groq via env). Only onboarding-survey answers (referral source,
+// country) are still recorded, directly on the user's profiles row.
 
-/** Records where the user said they heard about Codeply. Fire-and-forget. */
-async function pushReferralSource(userId, referralSource) {
+/** Records a single onboarding-survey answer for the signed-in user. Fire-and-forget. */
+async function updateProfileField(userId, field, value) {
   if (!supabase || !userId) return;
   try {
-    await supabase.from('profiles').update({ referral_source: referralSource }).eq('id', userId);
-  } catch (e) { console.warn('[Cloud] pushReferralSource error:', e.message); }
+    await supabase.from('profiles').update({ [field]: value }).eq('id', userId);
+  } catch (e) { console.warn(`[Cloud] updateProfileField(${field}) error:`, e.message); }
 }
 
 // ── AI call engine — proxied through Supabase (see lib/groq.js) ───────────────
@@ -921,13 +922,38 @@ ipcMain.handle('settings:save', async (_, settings) => {
       globalShortcut.register(savedSettings.hotkey || 'Alt+C', togglePopup);
     } catch (e) { console.warn('[hotkey] live re-register failed:', e.message); }
   }
-  // Record referral source for logged-in users (fire-and-forget).
-  if (settings.referralSource) {
+  // Record onboarding-survey answers for logged-in users (fire-and-forget).
+  if (settings.referralSource || settings.country) {
     const userId = await getLoggedInUserId();
-    if (userId) pushReferralSource(userId, settings.referralSource);
+    if (userId) {
+      if (settings.referralSource) updateProfileField(userId, 'referral_source', settings.referralSource);
+      if (settings.country) updateProfileField(userId, 'country', settings.country);
+    }
   }
   broadcastSettingsUpdated();
   return { success: true };
+});
+
+// The onboarding survey (referral source, country) must be gated per ACCOUNT,
+// not per device — local settings alone would mean signing into a second
+// account on the same machine silently skips it, since the local flag from
+// the FIRST account is still set. The dashboard checks this on every login
+// and falls back to local settings only for guests (no account to check).
+ipcMain.handle('profile:get', async () => {
+  try {
+    await ensureSupabaseReady();
+    const userId = await getLoggedInUserId();
+    if (!supabase || !userId) return { referral_source: null, country: null };
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('referral_source, country')
+      .eq('id', userId)
+      .single();
+    if (error || !data) return { referral_source: null, country: null };
+    return { referral_source: data.referral_source || null, country: data.country || null };
+  } catch {
+    return { referral_source: null, country: null };
+  }
 });
 
 // Notify all open windows that settings changed so they can hot-reload.

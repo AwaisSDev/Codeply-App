@@ -473,19 +473,35 @@ function showLogin() {
   requestAnimationFrame(() => { lp.style.transition = 'opacity .25s'; lp.style.opacity = '1'; });
 }
 
-// ─── First-run onboarding (referral survey) ─────────────────────────────────────
-// The AI engine is built in now — there is no API-key step. The only first-run
-// question left is the referral survey, gated on whether it was already answered.
+// ─── First-run onboarding (referral + country survey) ───────────────────────────
+// The AI engine is built in now — there is no API-key step. What's left is a
+// two-step survey (referral source, then country), gated per ACCOUNT: local
+// settings alone would mean signing into a second account on the same device
+// silently skips it, since the first account's local flag is still set. A
+// signed-in session checks the actual profiles row (the source of truth);
+// only guests (no account to check) fall back to local settings.
 let onboardingSequenceStarted = false;
-function proceedAfterLogin() {
+let onboardingCountryAnswered = false;
+
+async function proceedAfterLogin() {
   if (onboardingSequenceStarted) { hideLogin(); return; }
   onboardingSequenceStarted = true;
 
-  if (settings.referralSource) {
-    hideLogin();
-    return;
+  let referralAnswered = !!settings.referralSource;
+  let countryAnswered  = !!settings.country;
+
+  if (currentUser) {
+    try {
+      const profile = await codeply.getProfile();
+      referralAnswered = !!profile?.referral_source;
+      countryAnswered  = !!profile?.country;
+    } catch { /* keep local fallback on error */ }
   }
-  showReferralPage();
+  onboardingCountryAnswered = countryAnswered;
+
+  if (!referralAnswered) { showReferralPage(); return; }
+  if (!countryAnswered)  { showCountryPage(); return; }
+  hideLogin();
 }
 
 function showReferralPage() {
@@ -500,12 +516,45 @@ function finishReferralPage(value) {
   const rp = document.getElementById('referralPage');
   rp.style.transition = 'opacity .25s';
   rp.style.opacity = '0';
-  setTimeout(() => { rp.style.display = 'none'; }, 250);
+  setTimeout(() => {
+    rp.style.display = 'none';
+    if (onboardingCountryAnswered) hideLogin(); else showCountryPage();
+  }, 250);
 
   settings = { ...settings, referralSource: value };
   codeply.saveSettings({ referralSource: value }).catch(() => {});
+}
+
+function showCountryPage() {
+  document.getElementById('loginPage').style.display = 'none';
+  const cp = document.getElementById('countryPage');
+  cp.style.display = 'flex';
+  cp.style.opacity = '0';
+  requestAnimationFrame(() => { cp.style.transition = 'opacity .25s'; cp.style.opacity = '1'; });
+}
+
+function finishCountryPage(value) {
+  const cp = document.getElementById('countryPage');
+  cp.style.transition = 'opacity .25s';
+  cp.style.opacity = '0';
+  setTimeout(() => { cp.style.display = 'none'; }, 250);
+
+  settings = { ...settings, country: value };
+  codeply.saveSettings({ country: value }).catch(() => {});
 
   hideLogin();
+}
+
+function initCountrySurvey() {
+  const select = document.getElementById('countrySelect');
+  const continueBtn = document.getElementById('countryContinueBtn');
+  if (!select || !continueBtn) return;
+
+  select.addEventListener('change', () => { continueBtn.disabled = !select.value; });
+  continueBtn.addEventListener('click', () => {
+    if (continueBtn.disabled || !select.value) return;
+    finishCountryPage(select.value);
+  });
 }
 
 function initReferralSurvey() {
@@ -1010,6 +1059,7 @@ function wireAllHandlers() {
   const codeply = requireCodeply();
 
   initReferralSurvey();
+  initCountrySurvey();
   bindClick('onboardingDoneBtn', () => {
     const modal = document.getElementById('onboardingDoneModal');
     if (modal) modal.style.display = 'none';

@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('codeply', {
   getSettings() { return ipcRenderer.invoke('settings:get'); },
   saveSettings(s) { return ipcRenderer.invoke('settings:save', s); },
   onSettingsUpdated(cb) { ipcRenderer.on('settings:updated', (_, s) => cb(s)); },
+  getProfile() { return ipcRenderer.invoke('profile:get'); },
 
   // Usage
   getUsage() { return ipcRenderer.invoke('usage:get'); },
