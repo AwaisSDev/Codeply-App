@@ -112,26 +112,6 @@ async function persistAuthUser(user) {
   return mapped;
 }
 
-// ── Direct Supabase helpers (history — non-sensitive, no encryption needed) ────
-
-/** Log a single AI call to usage_history. Fire-and-forget. */
-async function logUsageToCloud({ model, tokensIn, tokensOut, tokensTotal, promptText, filePath }) {
-  if (!supabase) return;
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-    await supabase.from('usage_history').insert({
-      user_id: session.user.id,
-      model: model || '',
-      tokens_in: tokensIn || 0,
-      tokens_out: tokensOut || 0,
-      tokens_total: tokensTotal || 0,
-      prompt_text: (promptText || '').slice(0, 300),
-      file_path: filePath || '',
-    });
-  } catch (e) { console.warn('[Cloud] history log failed:', e.message); }
-}
-
 // ── Daily apply limit (100 applies/day/user) ────────────────────────────────
 // Counts each successful FILE WRITE (a multi-file apply counts once per file,
 // not once per click — otherwise one big batch could blow straight past the
@@ -210,8 +190,8 @@ async function updateProfileField(userId, field, value) {
 // No key lives in this app; the signed-in user's session authenticates every
 // call to the ai-proxy edge function instead. There is no model selection
 // anywhere in the app — plug and play, sign-in required.
-async function callAI(messages, expectJson = true) {
-  return groq.chat(messages, { json: expectJson });
+async function callAI(messages, expectJson = true, meta) {
+  return groq.chat(messages, { json: expectJson, meta });
 }
 
 /** Get the Supabase user ID of the currently logged-in user, or null. */
@@ -1415,7 +1395,7 @@ Response format:
         { role: 'user', content: 'Your last reply could not be parsed as JSON. Return ONLY the JSON object described above — no markdown fences, no commentary, no text before or after it.' }
       ];
 
-      const aiResult = await callAI(messages, true);
+      const aiResult = await callAI(messages, true, { promptText: instruction, filePath });
       if (!aiResult.success) {
         lastError = aiResult.error;
         // Rate-limited (the ai-proxy edge function already tried its own
@@ -1445,14 +1425,9 @@ Response format:
       });
       if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
       saveUsage(usageData);
-      logUsageToCloud({
-        model: lastModelUsed || 'unknown',
-        tokensIn: usg.prompt_tokens || 0,
-        tokensOut: usg.completion_tokens || 0,
-        tokensTotal: totalTokens,
-        promptText: instruction,
-        filePath,
-      });
+      // Cloud usage logging now happens server-side in ai-proxy (see meta
+      // passed into callAI above), so both this app and the CLI show up in
+      // usage_history — no client-side duplicate insert needed here.
 
       result.action = 'rewrite';
       if (result.confidence == null) result.confidence = 75;
@@ -1659,7 +1634,7 @@ Response format:
     ];
     if (feedback) messages.push({ role: 'user', content: feedback });
 
-    const aiResult = await callAI(messages, true);
+    const aiResult = await callAI(messages, true, { promptText: cleaned, filePath: filePath || '' });
     if (!aiResult.success) throw new Error(aiResult.error);
     if (aiResult.modelUsed) lastModelUsed = aiResult.modelUsed;
     const data = aiResult.data;
@@ -1716,11 +1691,8 @@ Response format:
   });
   if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
   saveUsage(usageData);
-  logUsageToCloud({
-    model: lastModelUsed || 'unknown',
-    tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
-    promptText: cleaned, filePath: filePath || '',
-  });
+  // Cloud usage logging happens server-side in ai-proxy now (see meta passed
+  // into callAI above) — no client-side duplicate insert needed here.
 
   return { success: true, edits: good, badCount: bad.length, confidence, reason, tokensUsed: totalTokens, modelUsed: lastModelUsed };
 }
@@ -1795,7 +1767,7 @@ Response format:
     ];
     if (feedback) messages.push({ role: 'user', content: feedback });
 
-    const aiResult = await callAI(messages, true);
+    const aiResult = await callAI(messages, true, { promptText: instruction, filePath });
     if (!aiResult.success) throw new Error(aiResult.error);
     if (aiResult.modelUsed) lastModelUsed = aiResult.modelUsed;
     const data = aiResult.data;
@@ -1843,11 +1815,8 @@ Response format:
   });
   if (usageData.history.length > 50) usageData.history = usageData.history.slice(0, 50);
   saveUsage(usageData);
-  logUsageToCloud({
-    model: lastModelUsed || 'unknown',
-    tokensIn: 0, tokensOut: 0, tokensTotal: totalTokens,
-    promptText: instruction, filePath,
-  });
+  // Cloud usage logging happens server-side in ai-proxy now (see meta passed
+  // into callAI above) — no client-side duplicate insert needed here.
 
   const payload = { success: true, edits: good, badCount: bad.length, confidence, reason, tokensUsed: totalTokens, modelUsed: lastModelUsed };
   // Cache the outcome even when it's partial or empty — at temperature 0 a
