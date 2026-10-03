@@ -134,12 +134,27 @@ async function transcribe(wav: Uint8Array, hint: string): Promise<string> {
 }
 
 /** Where the next sentence ends in `s`, or -1. The first piece may end at a comma to start talking sooner. */
+// Fluency: every piece is voiced on its own, so a cut resets the intonation.
+// The first piece is one whole sentence (split at a comma only when it is very
+// long, to start talking sooner); later pieces gather short sentences into one
+// of ~80+ characters so they are said with natural flow. Later pieces are made
+// while the earlier ones play, so the gathering costs no waiting.
+const MIN_LATER = 80;
 function sentenceEnd(s: string, first: boolean): number {
-  const m = /[.!?]+["')\]]*(\s|$)/.exec(s);
-  if (m && (m.index > 1 || s.length > 3)) return m.index + m[0].length;
+  const re = /[.!?]+["')\]]*(\s|$)/g;
+  let m: RegExpExecArray | null;
+  let end = -1;
+  while ((m = re.exec(s))) {
+    if (m.index <= 1 && s.length <= 3) continue;
+    end = m.index + m[0].length;
+    if (first || end >= MIN_LATER) return end;
+  }
   if (first) {
-    const c = /[,;:]\s/.exec(s);
-    if (c && s.slice(0, c.index).trim().split(/\s+/).length >= 3) return c.index + c[0].length;
+    const words = s.trim().split(/\s+/);
+    if (words.length > 18) {
+      const c = /[,;:]\s/g; let cm: RegExpExecArray | null;
+      while ((cm = c.exec(s))) if (s.slice(0, cm.index).trim().split(/\s+/).length >= 6) return cm.index + cm[0].length;
+    }
   }
   return -1;
 }
@@ -210,7 +225,7 @@ Deno.serve(async (req: Request) => {
       let chain: Promise<void> = Promise.resolve();
       const emit = (sentence: string) => {
         // Nothing that cannot be said: emojis, symbols, markdown.
-        const text = sentence.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}*_#`>~]/gu, "").replace(/\s+/g, " ").trim();
+        const text = sentence.replace(/\s*[—–]\s*/g, ", ").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}*_#`>~]/gu, "").replace(/\s+/g, " ").trim();
         if (!/[\p{L}\p{N}]/u.test(text)) return;
         const i = index++;
         if (pcm) {
