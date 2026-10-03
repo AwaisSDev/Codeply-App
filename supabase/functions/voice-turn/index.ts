@@ -19,7 +19,7 @@
 // Same sign-in, daily request cap and voice character budget as ai-proxy and tts-proxy.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { encodeBase64 } from "jsr:@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "jsr:@std/encoding/base64";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -112,6 +112,27 @@ async function speakStream(text: string, voice: string): Promise<ReadableStreamD
   return res.body.getReader();
 }
 
+/** Whisper large-v3-turbo on Groq: the words in one utterance (16 kHz WAV), or "" for silence and noise. */
+async function transcribe(wav: Uint8Array, hint: string): Promise<string> {
+  for (const key of GROQ_API_KEYS) {
+    const form = new FormData();
+    form.append("file", new Blob([wav], { type: "audio/wav" }), "speech.wav");
+    form.append("model", "whisper-large-v3-turbo");
+    form.append("language", "en");
+    form.append("response_format", "json");
+    form.append("temperature", "0");
+    if (hint) form.append("prompt", hint);
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const text = String(data.text || "").trim();
+      return /^[\s.,!?-]*$/.test(text) || /^\(?\[?(blank_audio|music|silence|inaudible|noise|thank you\.?)\]?\)?\.?$/i.test(text) ? "" : text;
+    }
+    if (!/rate limit|429|quota/i.test(String(data?.error?.message || ""))) break;
+  }
+  throw new Error("Speech to text failed.");
+}
+
 /** Where the next sentence ends in `s`, or -1. The first piece may end at a comma to start talking sooner. */
 function sentenceEnd(s: string, first: boolean): number {
   const m = /[.!?]+["')\]]*(\s|$)/.exec(s);
@@ -132,6 +153,7 @@ Deno.serve(async (req: Request) => {
   if (!token) return json({ success: false, error: "Sign in to use calls." }, 401);
   const body = await req.json().catch(() => ({}));
   const messages = Array.isArray(body?.messages) ? body.messages.slice(-20) : [];
+  // In audio mode the last user message comes from the audio (see below).
   if (!messages.length) return json({ success: false, error: "messages[] required" }, 400);
   const voice = /^aura-2-[a-z]+-[a-z]{2}$/.test(String(body?.voice ?? "")) ? String(body.voice) : DEFAULT_VOICE;
   const pcm = body?.format === "pcm";
@@ -140,17 +162,37 @@ Deno.serve(async (req: Request) => {
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } }, auth: { persistSession: false },
   });
-  // Start the model at once; sign-in and budget are checked while it warms up.
+  // Sign-in, the daily cap and the voice budget all at once. The budget read
+  // uses the token's user id before the sign-in check returns; nothing is
+  // spent or sent unless that check passes.
+  let claimedId = "";
+  try { claimedId = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).sub || ""; } catch { /* checked below */ }
+  const authP = supabase.auth.getUser(token);
+  const countP = supabase.rpc("get_daily_ai_request_count");
+  const voiceP = claimedId ? service.rpc("add_tts_chars", { p_user: claimedId, p_chars: 0 })
+    .then(({ data }) => !(typeof data === "number" && data > TTS_DAILY_CHARS)).catch(() => true) : Promise.resolve(false);
+
+  // Audio in: what the user said, heard by Whisper large-v3-turbo, joins the
+  // conversation; the phone gets it first as a "heard" event.
+  let heard: string | null = null;
+  if (typeof body?.audio_b64 === "string" && body.audio_b64.length > 100) {
+    const [{ data: a }] = await Promise.all([authP]);
+    if (!a?.user) return json({ success: false, error: "Sign in to use calls." }, 401);
+    heard = await transcribe(decodeBase64(body.audio_b64), String(body?.hint ?? "").slice(0, 400));
+    if (!heard) {
+      return new Response(`${JSON.stringify({ t: "heard", text: "" })}\n${JSON.stringify({ t: "done" })}\n`,
+        { headers: { ...CORS, "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
+    }
+    messages.push({ role: "user", content: heard });
+  }
+
+  // Start the model at once; the checks finish while it warms up.
   const ctl = new AbortController();
   const model = MODELS_OK.includes(String(body?.model)) ? String(body.model) : MODEL;
   const pieces = groqStream(messages, maxTokens, ctl.signal, model);
   const firstPiece = pieces.next(); // kicks off the request
-  const [{ data: { user }, error: authErr }, { data: count }] = await Promise.all([
-    supabase.auth.getUser(token), supabase.rpc("get_daily_ai_request_count"),
-  ]);
-  // The voice budget, read once per turn (adding 0); each sentence adds its own later.
-  const voiceOk = user ? await service.rpc("add_tts_chars", { p_user: user.id, p_chars: 0 })
-    .then(({ data }) => !(typeof data === "number" && data > TTS_DAILY_CHARS)).catch(() => true) : false;
+  const [{ data: { user }, error: authErr }, { data: count }] = await Promise.all([authP, countP]);
+  const voiceOk = user && user.id === claimedId ? await voiceP : false;
   if (authErr || !user) { ctl.abort(); return json({ success: false, error: "Sign in to use calls." }, 401); }
   if (typeof count === "number" && count >= DAILY_REQUEST_CAP) {
     ctl.abort();
@@ -162,12 +204,14 @@ Deno.serve(async (req: Request) => {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (o: unknown) => controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      if (heard !== null) send({ t: "heard", text: heard });
       let pending = ""; let index = 0; let all = ""; let work: string | null = null;
       // Audio is made in parallel but sent in order.
       let chain: Promise<void> = Promise.resolve();
       const emit = (sentence: string) => {
-        const text = sentence.replace(/\s+/g, " ").trim();
-        if (!text) return;
+        // Nothing that cannot be said: emojis, symbols, markdown.
+        const text = sentence.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}*_#`>~]/gu, "").replace(/\s+/g, " ").trim();
+        if (!/[\p{L}\p{N}]/u.test(text)) return;
         const i = index++;
         if (pcm) {
           // Started now, sent in order: sentence i streams after sentence i-1 ends.
