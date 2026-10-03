@@ -10,10 +10,14 @@
 // If the user wants real work (email, files, ...), the model says one short
 // natural line and then writes [[WORK: <task>]]; that comes through as a
 // "work" event and the phone hands it to the PC's agent.
+// Reminders ("call me at 7") come as [[REMIND: <ISO time> | <repeat> | <kind> | <text>]]
+// tags: taken out of the speech (never said) and sent as "remind" events; the
+// phone saves them through the reminders function.
 //
 // Response: NDJSON lines
 //   {"t":"say","i":0,"text":"..."}           a sentence, in order
 //   {"t":"audio","i":0,"mime":"audio/mpeg","b64":"..."}  its audio (may be missing: then the phone's voice says it)
+//   {"t":"remind","at":"...","repeat":"none","kind":"call","text":"..."}  a reminder to save
 //   {"t":"work","task":"..."}                 real work for the PC
 //   {"t":"done"} | {"t":"error","error":"..."}
 // Same sign-in, daily request cap and voice character budget as ai-proxy and tts-proxy.
@@ -28,6 +32,8 @@ const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY") ?? "";
 const GROQ_API_KEYS: string[] = (Deno.env.get("GROQ_API_KEYS") ?? Deno.env.get("GROQ_API_KEY") ?? "")
   .split(",").map((k) => k.trim()).filter(Boolean);
 const MODEL = Deno.env.get("VOICE_MODEL") || "openai/gpt-oss-20b"; // quickest first words on Groq; good enough for talk
+const REMIND_MODEL = Deno.env.get("VOICE_REMIND_MODEL") || "openai/gpt-oss-120b";
+const REMIND_TALK = /\b(remind|reminder|call me|ring me|wake me|check (in|on) me|plan (my|the|out)|my day|schedule|snooze|tomorrow|tonight|this (morning|afternoon|evening)|in (a|an|\d+|ten|five|twenty|thirty) (min|minute|hour)|o'?clock|\d{1,2}(:\d\d)?\s*(am|pm|a\.m\.|p\.m\.))/i;
 const DAILY_REQUEST_CAP = 400;
 const TTS_DAILY_CHARS = Number(Deno.env.get("TTS_DAILY_CHARS") || 20000);
 const DEFAULT_VOICE = "aura-2-thalia-en";
@@ -203,7 +209,12 @@ Deno.serve(async (req: Request) => {
 
   // Start the model at once; the checks finish while it warms up.
   const ctl = new AbortController();
-  const model = MODELS_OK.includes(String(body?.model)) ? String(body.model) : MODEL;
+  // Reminders and day plans need a time worked out and a [[REMIND: ...]] tag
+  // written every time: the small model sometimes forgets the tag, so those
+  // turns go to the bigger one.
+  const recentTalk = messages.slice(-3).filter((m: { role?: string }) => m?.role !== "system").map((m: { content?: unknown }) => String(m?.content ?? "")).join(" ");
+  const aboutTime = REMIND_TALK.test(recentTalk);
+  const model = MODELS_OK.includes(String(body?.model)) ? String(body.model) : aboutTime ? REMIND_MODEL : MODEL;
   const pieces = groqStream(messages, maxTokens, ctl.signal, model);
   const firstPiece = pieces.next(); // kicks off the request
   const [{ data: { user }, error: authErr }, { data: count }] = await Promise.all([authP, countP]);
@@ -272,6 +283,14 @@ Deno.serve(async (req: Request) => {
         while (!step.done) {
           all += step.value;
           pending += step.value;
+          // Reminder tags are taken out as they complete (never spoken) and
+          // sent as events; the talking goes on around them.
+          let rm: RegExpExecArray | null;
+          while ((rm = /\[\[\s*REMIND\s*:\s*([\s\S]*?)\]\]/i.exec(pending))) {
+            const [at, repeat, kind, ...text] = rm[1].split("|").map((x) => x.trim());
+            send({ t: "remind", at: at || "", repeat: repeat || "none", kind: kind || "remind", text: text.join(" | ") });
+            pending = pending.slice(0, rm.index) + pending.slice(rm.index + rm[0].length);
+          }
           // The work tag: everything from "[[" on is held back until it resolves.
           const tag = pending.indexOf("[[");
           let speakable = tag >= 0 ? pending.slice(0, tag) : pending;
