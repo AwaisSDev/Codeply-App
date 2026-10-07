@@ -8,7 +8,7 @@
 // No subscription at all is fine: the reminder still counts as sent and shows
 // in the app.
 //
-// Push payload: { title: bot name, body: text, reminderId, kind, botId, botVoice, key, url }
+// Push payload: { title: bot name, body: text, reminderId, kind, botId, botVoice, key, url, mail? }
 // (key is the reminder's action_key: the notification's Snooze button uses it).
 //
 // Only the cron job may call this: it sends the x-cron-secret header, kept in
@@ -72,7 +72,7 @@ export function nextDue(dueIso: string, repeat: string, tz: string | null, now: 
 
 type Row = {
   id: string; user_id: string; bot_id: string | null; bot_name: string; bot_voice: string | null; text: string;
-  due_at: string; tz: string | null; repeat: string | null; kind: string; status: string; action_key: string;
+  due_at: string; tz: string | null; repeat: string | null; kind: string; status: string; action_key: string; payload: Record<string, unknown> | null;
 };
 type Sub = { id: string; endpoint: string; keys: { p256dh: string; auth: string } };
 
@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
   const nowIso = new Date(now).toISOString();
 
   const { data: due, error } = await service.from("reminders")
-    .select("id, user_id, bot_id, bot_name, bot_voice, text, due_at, tz, repeat, kind, status, action_key")
+    .select("id, user_id, bot_id, bot_name, bot_voice, text, due_at, tz, repeat, kind, status, action_key, payload")
     .in("status", ["pending", "snoozed"]).lte("due_at", nowIso).order("due_at", { ascending: true }).limit(BATCH);
   if (error) return json({ success: false, error: error.message }, 500);
 
@@ -113,6 +113,10 @@ Deno.serve(async (req: Request) => {
     const payload = JSON.stringify({
       title: r.bot_name || "Codeply", body: r.text, reminderId: r.id, kind: r.kind, botId: r.bot_id, botVoice: r.bot_voice,
       key: r.action_key, url: `/?call=${r.id}`,
+      // An always-on bot's important email (mail-watch-tick, or Craft's bots-watch.js): the phone opens Gmail.
+      // The draft text stays out (push payloads are small); a call fetches the full reminder.
+      ...(r.payload && r.payload.mail && typeof r.payload.mail === "object" ? { mail: (({ from, subject, summary, drafted, level, gmailUrl, draftUrl }) =>
+        ({ from, subject, summary: String(summary ?? "").slice(0, 240), drafted, level, gmailUrl, draftUrl }))(r.payload.mail as Record<string, unknown>) } : {}),
     });
     await Promise.all(subs.map(async (s) => {
       try {
