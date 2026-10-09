@@ -24,6 +24,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { decodeBase64, encodeBase64 } from "jsr:@std/encoding/base64";
+import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -118,6 +119,14 @@ async function speakStream(text: string, voice: string): Promise<ReadableStreamD
   return res.body.getReader();
 }
 
+/** The last few lines of the call, for working out which emails the user means. */
+// deno-lint-ignore no-explicit-any
+function callTalk(messages: any[]): { userText: string; talk: string } {
+  const turns = messages.filter((m) => m?.role === "user" || m?.role === "assistant").slice(-4);
+  const last = [...turns].reverse().find((m) => m.role === "user");
+  return { userText: String(last?.content ?? ""), talk: turns.map((m) => `${m.role === "user" ? "User" : "Bot"}: ${String(m.content ?? "").slice(0, 500)}`).join("\n") };
+}
+
 /** Whisper large-v3-turbo on Groq: the words in one utterance (16 kHz WAV), or "" for silence and noise. */
 async function transcribe(wav: Uint8Array, hint: string): Promise<string> {
   for (const key of GROQ_API_KEYS) {
@@ -205,6 +214,17 @@ Deno.serve(async (req: Request) => {
         { headers: { ...CORS, "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
     }
     messages.push({ role: "user", content: heard });
+  }
+
+  // Email talk: look in their Gmail first (works with the PC off), once the
+  // sign-in is verified, and give the bot what it found before it speaks.
+  const { userText, talk } = callTalk(messages);
+  if (MAIL_TALK.test(userText)) {
+    const { data: a } = await authP;
+    if (a?.user) {
+      const inbox = await inboxContext(a.user.id, talk, String(body?.tz ?? "UTC")).catch(() => null);
+      if (inbox) messages.push({ role: "system", content: inbox });
+    }
   }
 
   // Start the model at once; the checks finish while it warms up.

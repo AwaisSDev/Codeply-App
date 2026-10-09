@@ -7,6 +7,9 @@
 //   disable   deletes the sign-in, the bots, seen ids and events
 //   heartbeat { cursor, seen: [message ids] }   the PC is on and handled these
 //   status    { since (ms) }  -> { enabled, cursor, seen, events } what the cloud did
+//   link      { email, gmail: { refreshToken, clientId, clientSecret } }  Gmail for the bots on phone calls (mail_links)
+//   unlink    removes that
+//   linkStatus -> { linked, email }
 // The sealed sign-in is never returned. Deployed with --no-verify-jwt: the
 // token is checked here.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -77,6 +80,26 @@ Deno.serve(async (req: Request) => {
         if (e2) throw e2;
       }
       return json({ success: true, bots: bots.length });
+    }
+
+    if (action === "link") {
+      const g = body?.gmail ?? {};
+      const refreshToken = str(g.refreshToken, 2048);
+      if (!refreshToken) return json({ success: false, error: "Reconnect Gmail in Connect Apps first." }, 400);
+      const token_enc = await seal(JSON.stringify({ refreshToken, clientId: str(g.clientId, 300), clientSecret: str(g.clientSecret, 300) }), user.id);
+      const { error } = await service.from("mail_links").upsert({ user_id: user.id, email: str(body?.email, 320).toLowerCase(), token_enc, updated_at: now }, { onConflict: "user_id" });
+      if (error) throw error;
+      return json({ success: true });
+    }
+
+    if (action === "unlink") {
+      await service.from("mail_links").delete().eq("user_id", user.id);
+      return json({ success: true });
+    }
+
+    if (action === "linkStatus") {
+      const { data } = await service.from("mail_links").select("email").eq("user_id", user.id).maybeSingle();
+      return json({ success: true, linked: !!data, email: data?.email ?? "" });
     }
 
     if (action === "disable") {

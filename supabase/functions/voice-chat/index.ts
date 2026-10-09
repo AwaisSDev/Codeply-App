@@ -8,6 +8,7 @@
 // askFast). The cap still holds: an over-cap request's answer is discarded.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -24,6 +25,14 @@ const CORS = {
 };
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json", ...extra } });
+
+/** The last few lines of the call, for working out which emails the user means. */
+// deno-lint-ignore no-explicit-any
+function callTalk(messages: any[]): { userText: string; talk: string } {
+  const turns = messages.filter((m) => m?.role === "user" || m?.role === "assistant").slice(-4);
+  const last = [...turns].reverse().find((m) => m.role === "user");
+  return { userText: String(last?.content ?? ""), talk: turns.map((m) => `${m.role === "user" ? "User" : "Bot"}: ${String(m.content ?? "").slice(0, 500)}`).join("\n") };
+}
 
 async function groq(messages: unknown, maxTokens: number) {
   let last = "AI engine unavailable";
@@ -65,6 +74,16 @@ Deno.serve(async (req: Request) => {
 
     // Sign-in, budget and the model, all at once.
     const userP = supabase.auth.getUser(token).then((r) => { mark("auth"); return r; });
+    // Email talk: read their Gmail first (verified sign-in only), then answer from it.
+    const { userText, talk } = callTalk(messages);
+    if (MAIL_TALK.test(userText)) {
+      const { data: a } = await userP;
+      if (a?.user) {
+        const inbox = await inboxContext(a.user.id, talk, String(body?.tz ?? "UTC")).catch(() => null);
+        if (inbox) messages.push({ role: "system", content: inbox });
+        mark("gmail");
+      }
+    }
     const countP = supabase.rpc("get_daily_ai_request_count").then((r) => { mark("count"); return r; });
     const modelP = groq(messages, maxTokens).then((r) => { mark("model"); return r; });
 
