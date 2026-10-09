@@ -164,6 +164,76 @@ async function fluxStream(text: string, voice: string): Promise<ReadableStreamDe
 }
 
 /**
+ * A whole reply in one Flux voice stream, so it flows like one take instead of
+ * sentence by sentence (each separate request restarts the intonation). The
+ * sentences go into one socket as the model writes them; the first is flushed
+ * at once so the voice starts quickly, the rest on the final flush. The audio
+ * is passed on as it comes; captions follow it by an estimate of where the
+ * voice is (about 15 characters a second). Only the captions are timed: the
+ * voice is never cut or waited on for them.
+ */
+const FLUX_CPS = 15;
+function makeFluxTurn(voice: string, send: (o: unknown) => void) {
+  const t0 = Date.now();
+  const sentences: { i: number; endSec: number }[] = [];
+  let estSec = 0; let audioSec = 0; let cur = -1; let firstSent = false;
+  let flushes = 0; let flushed = 0; let finishing = false;
+  let carry: Uint8Array | null = null;
+  let ws: WebSocket | null = null;
+  const early: string[] = []; // sentences written before the socket was open
+  let resolveDone!: () => void;
+  const done = new Promise<void>((r) => { resolveDone = r; });
+  const sendJson = (o: unknown) => { try { ws?.send(JSON.stringify(o)); } catch { /* gone */ } };
+  const speak = (text: string) => {
+    sendJson({ type: "Speak", text });
+    if (!flushes) { sendJson({ type: "Flush" }); flushes++; } // start the voice now
+  };
+  const closeIfDone = () => { if (finishing && flushed >= flushes) sendJson({ type: "Close" }); };
+  takeFlux(voice).then((sock) => {
+    ws = sock;
+    if (!sock) { resolveDone(); return; } // no voice: the phone says the captions itself
+    sock.onmessage = (e) => {
+      if (typeof e.data === "string") {
+        try { if (JSON.parse(e.data).type === "Flushed") { flushed++; closeIfDone(); } } catch { /* other events */ }
+        return;
+      }
+      let bytes = new Uint8Array(e.data as ArrayBuffer);
+      if (carry) { const m = new Uint8Array(carry.length + bytes.length); m.set(carry); m.set(bytes, carry.length); bytes = m; carry = null; }
+      if (bytes.length % 2) { carry = bytes.slice(-1); bytes = bytes.slice(0, -1); }
+      if (!bytes.length || !sentences.length) return;
+      // Which sentence the voice is on, for the captions only.
+      let idx = sentences.findIndex((x) => audioSec < x.endSec);
+      if (idx < 0) idx = sentences.length - 1;
+      if (idx < cur) idx = cur;
+      if (idx > cur) { if (cur >= 0) send({ t: "end", i: sentences[cur].i }); cur = idx; }
+      audioSec += bytes.length / 2 / PCM_RATE;
+      const ev: Record<string, unknown> = { t: "pcm", i: sentences[cur].i, rate: PCM_RATE, b64: encodeBase64(bytes) };
+      if (!firstSent) { firstSent = true; ev.ms = Date.now() - t0; }
+      send(ev);
+    };
+    sock.onclose = () => { if (cur >= 0) send({ t: "end", i: sentences[cur].i }); resolveDone(); };
+    sock.onerror = () => { console.error("[voice-turn] flux turn socket error"); resolveDone(); };
+    for (const t of early.splice(0)) speak(t);
+    if (finishing) { if (flushes) { sendJson({ type: "Flush" }); flushes++; } else sendJson({ type: "Close" }); }
+  });
+  return {
+    /** A finished sentence: its caption now, its words into the voice stream. */
+    say(i: number, text: string) {
+      send({ t: "say", i, text });
+      estSec += Math.max(0.5, text.length / FLUX_CPS);
+      sentences.push({ i, endSec: estSec });
+      if (ws) speak(text); else early.push(text);
+    },
+    /** The reply is complete: say the rest and wait for the last audio. */
+    finish(): Promise<void> {
+      finishing = true;
+      if (ws) { if (flushes) { sendJson({ type: "Flush" }); flushes++; } else sendJson({ type: "Close" }); }
+      return Promise.race([done, new Promise<void>((r) => setTimeout(r, 25000))]);
+    },
+  };
+}
+
+/**
  * A sentence as streamed raw PCM (signed 16-bit, 24 kHz mono): Deepgram sends
  * it while it is still making the rest, so the first sound is out in a few
  * hundred milliseconds instead of after the whole sentence.
@@ -218,7 +288,8 @@ async function transcribe(wav: Uint8Array, hint: string): Promise<string> {
 // while the earlier ones play, so the gathering costs no waiting.
 const MIN_LATER = 80;
 function sentenceEnd(s: string, first: boolean): number {
-  const re = /[.!?]+["')\]]*(\s|$)/g;
+  // A space must follow: a period at the end of what has streamed so far may be the "29." of "29.5".
+  const re = /[.!?]+["')\]]*\s/g;
   let m: RegExpExecArray | null;
   let end = -1;
   while ((m = re.exec(s))) {
@@ -317,11 +388,18 @@ Deno.serve(async (req: Request) => {
       let pending = ""; let index = 0; let all = ""; let work: string | null = null;
       // Audio is made in parallel but sent in order.
       let chain: Promise<void> = Promise.resolve();
+      // Flux: the whole reply as one continuous voice stream (makeFluxTurn).
+      const flux = pcm && voiceOk && voice.startsWith("flux-") ? makeFluxTurn(voice, send) : null;
       const emit = (sentence: string) => {
         // Nothing that cannot be said: emojis, symbols, markdown.
         const text = sentence.replace(/\s*[—–]\s*/g, ", ").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}*_#`>~]/gu, "").replace(/\s+/g, " ").trim();
         if (!/[\p{L}\p{N}]/u.test(text)) return;
         const i = index++;
+        if (flux) {
+          flux.say(i, text);
+          service.rpc("add_tts_chars", { p_user: user.id, p_chars: text.length }).then(() => {}, () => {});
+          return;
+        }
         if (pcm) {
           // Started now, sent in order: sentence i streams after sentence i-1 ends.
           const t0 = Date.now();
@@ -392,6 +470,7 @@ Deno.serve(async (req: Request) => {
       }
       const rest = pending.replace(/\[\[[\s\S]*$/, "").trim();
       if (rest) emit(rest);
+      if (flux) await flux.finish();
       await chain;
       if (work) send({ t: "work", task: work });
       send({ t: "done" });
