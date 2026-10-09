@@ -53,7 +53,18 @@ type Account = {
 type Bot = {
   bot_id: string; name: string; voice: string | null; specialty: string; instructions: string; tone: string; memory: string[];
   keywords: string[]; senders: string[]; reach: string; draft: boolean; quiet: { on: boolean; from: string; to: string }; tz: string | null;
+  alerts?: Alert[];
 };
+type Alert = { from: string; how: "call" | "text"; repeat: boolean };
+
+/** The alert this sender matches (an address, or a domain and its subdomains). */
+function matchAlert(b: Bot, fromEmail: string): Alert | null {
+  const from = fromEmail.toLowerCase();
+  return (b.alerts ?? []).find((a) => {
+    const s = String(a.from || "").toLowerCase().replace(/^@/, "");
+    return !!s && (from === s || from.endsWith(`@${s}`) || from.endsWith(`.${s}`));
+  }) ?? null;
+}
 
 class GoneError extends Error {}
 
@@ -196,17 +207,22 @@ async function watchAccount(a: Account, bots: Bot[], stats: Record<string, numbe
     if (!m.labels.includes("INBOX") || m.labels.some((l) => ["SPAM", "TRASH", "DRAFT", "SENT"].includes(l))) continue;
     if (!m.fromEmail || m.fromEmail === me) continue;
     if (!(m.fromEmail in senders)) senders[m.fromEmail] = await api.sentTo(m.fromEmail);
-    let best: { b: Bot; s: ReturnType<typeof scoreMessage> } | null = null;
+    let best: { b: Bot; s: ReturnType<typeof scoreMessage>; alert?: Alert } | null = null;
     for (const b of bots) {
+      const alert = matchAlert(b, m.fromEmail);
+      if (alert) { best = { b, alert, s: { score: 99, level: "very", reasons: ["you asked to hear about this sender"] } as ReturnType<typeof scoreMessage> }; break; }
+    }
+    if (!best) for (const b of bots) {
       const s = scoreMessage(m, { me, knownSender: senders[m.fromEmail], rules: { keywords: b.keywords, senders: b.senders } });
       if (!best || s.score > best.s.score) best = { b, s };
     }
-    if (!best || best.s.score < IMPORTANT_AT) continue;
+    if (!best || (!best.alert && best.s.score < IMPORTANT_AT)) continue;
     stats.important++;
-    const { b, s } = best;
+    const { b, s, alert } = best;
     const ev: Record<string, unknown> = {
       level: s.level, score: s.score, reasons: s.reasons, messageId: m.id, threadId: m.threadId, from: m.from, fromName: m.fromName,
       fromEmail: m.fromEmail, subject: m.subject || "(no subject)", summary: m.snippet.slice(0, 300), reply: "", draftId: "", draftMessageId: "", error: "",
+      ...(alert ? { alert } : {}),
     };
     if (b.draft) {
       try {
@@ -229,13 +245,19 @@ async function watchAccount(a: Account, bots: Bot[], stats: Record<string, numbe
     Object.assign(ev, links(me, m.threadId, String(ev.draftMessageId)));
     const line = ev.draftId ? `I drafted a reply to ${m.fromName} about ${ev.subject}` : `Important email from ${m.fromName}: ${ev.subject}`;
     await service.from("mail_watch_events").insert({ user_id: a.user_id, bot_id: b.bot_id, data: ev });
-    if (b.reach !== "message" && !inQuietHours(b.quiet, b.tz)) {
+    // An alert the user asked for always goes through, the way they asked; anything else follows the bot's settings.
+    if (alert || (b.reach !== "message" && !inQuietHours(b.quiet, b.tz))) {
       await service.from("reminders").insert({
         user_id: a.user_id, bot_id: b.bot_id, bot_name: b.name, bot_voice: b.voice, text: line.slice(0, 480),
-        due_at: new Date().toISOString(), tz: b.tz, kind: b.reach === "call" && s.level === "very" ? "call" : "remind",
+        due_at: new Date().toISOString(), tz: b.tz, kind: alert ? (alert.how === "call" ? "call" : "remind") : b.reach === "call" && s.level === "very" ? "call" : "remind",
         payload: { mail: { from: m.fromName.slice(0, 120), subject: String(ev.subject).slice(0, 200), summary: String(ev.summary).slice(0, 600), reply: String(ev.reply).slice(0, 1500), drafted: !!ev.draftId, level: s.level, gmailUrl: ev.gmailUrl, draftUrl: ev.draftUrl } },
       });
       stats.alerted++;
+    }
+    if (alert && !alert.repeat) {
+      // Once: forget it here (the PC drops its copy when it reads this event).
+      b.alerts = (b.alerts ?? []).filter((x) => x.from !== alert.from);
+      await service.from("mail_watch_bots").update({ alerts: b.alerts }).eq("user_id", a.user_id).eq("bot_id", b.bot_id);
     }
   }
   const keys = Object.keys(senders);

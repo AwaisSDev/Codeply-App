@@ -67,6 +67,8 @@ Deno.serve(async (req: Request) => {
         specialty: str(b.specialty, 200), instructions: str(b.instructions, 4000), tone: str(b.tone, 400),
         memory: list(b.memory, 15, 240), keywords: list(b.keywords, 15, 40), senders: list(b.senders, 10, 120),
         reach: REACH.includes(b.reach) ? b.reach : "push", draft: b.draft !== false,
+        // deno-lint-ignore no-explicit-any
+        alerts: (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 20).map((x: any) => ({ from: str(x?.from, 200).toLowerCase(), how: x?.how === "call" ? "call" : "text", repeat: !!x?.repeat })).filter((x: { from: string }) => x.from),
         quiet: { on: b.quiet?.on !== false, from: hhmm(b.quiet?.from, "22:00"), to: hhmm(b.quiet?.to, "07:00") }, tz: validTz(b.tz),
       })).filter((b: { bot_id: string }) => /^[a-z0-9-]{1,60}$/.test(b.bot_id));
       await service.from("mail_watch_bots").delete().eq("user_id", user.id);
