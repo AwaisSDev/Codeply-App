@@ -92,10 +92,15 @@ Deno.serve(async (req: Request) => {
 
   switch (action) {
     case "list": {
-      const { data, error } = await mine().select(FIELDS).eq("user_id", user.id)
-        .in("status", ["pending", "snoozed"]).order("due_at", { ascending: true }).limit(100);
+      // What is coming up, plus what went out in the last day (a bot's call or
+      // text placed "now" is sent within a minute and would vanish otherwise).
+      const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+      const [{ data, error }, { data: recent }] = await Promise.all([
+        mine().select(FIELDS).eq("user_id", user.id).in("status", ["pending", "snoozed"]).order("due_at", { ascending: true }).limit(100),
+        mine().select(FIELDS).eq("user_id", user.id).in("status", ["sent", "done"]).gte("due_at", since).order("due_at", { ascending: false }).limit(20),
+      ]);
       if (error) return json({ success: false, error: "Could not load reminders." }, 500);
-      return json({ success: true, reminders: data });
+      return json({ success: true, reminders: [...(data ?? []), ...(recent ?? [])] });
     }
     case "get": {
       if (!isUuid(body.id)) return json({ success: false, error: "id required." }, 400);
