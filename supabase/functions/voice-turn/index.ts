@@ -108,34 +108,59 @@ async function speak(text: string, voice: string, userId: string): Promise<{ byt
  * as a stream. Deepgram says "Flushed" BEFORE the last audio arrives, so on it
  * we ask it to close and keep reading until the socket actually closes.
  */
-function fluxStream(text: string, voice: string): Promise<ReadableStreamDefaultReader<Uint8Array> | null> {
+// Opening the socket is most of the wait, so it happens ahead of time: one is
+// opened while the model is still thinking (warmFlux at the start of a turn),
+// and every sentence that takes one opens the next for the sentence after it.
+const fluxWarm = new Map<string, Promise<WebSocket | null>>();
+function openFlux(voice: string): Promise<WebSocket | null> {
   return new Promise((resolve) => {
     let ws: WebSocket;
     try {
       ws = new WebSocket(`wss://api.deepgram.com/v2/speak?model=${encodeURIComponent(voice)}&encoding=linear16&sample_rate=${PCM_RATE}`, ["token", DEEPGRAM_API_KEY]);
     } catch (e) { console.error("[voice-turn] flux", e); resolve(null); return; }
     ws.binaryType = "arraybuffer";
-    let ctl: ReadableStreamDefaultController<Uint8Array>;
-    let settled = false;
-    const stream = new ReadableStream<Uint8Array>({ start(c) { ctl = c; }, cancel() { try { ws.close(); } catch { /* gone */ } } });
-    const finish = () => { try { ctl.close(); } catch { /* closed */ } try { ws.close(); } catch { /* gone */ } };
-    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(null); } finish(); }, 15000);
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "Speak", text }));
-      ws.send(JSON.stringify({ type: "Flush" }));
-      settled = true;
-      resolve(stream.getReader());
-    };
-    ws.onmessage = (e) => {
-      if (typeof e.data === "string") {
-        try { if (JSON.parse(e.data).type === "Flushed") ws.send(JSON.stringify({ type: "Close" })); } catch { /* other events */ }
-        return;
-      }
-      try { ctl.enqueue(new Uint8Array(e.data as ArrayBuffer)); } catch { /* reader gone */ }
-    };
-    ws.onerror = () => { console.error("[voice-turn] flux socket error"); if (!settled) { settled = true; clearTimeout(timer); resolve(null); } finish(); };
-    ws.onclose = () => { clearTimeout(timer); try { ctl.close(); } catch { /* closed */ } };
+    const t = setTimeout(() => { resolve(null); try { ws.close(); } catch { /* gone */ } }, 6000);
+    ws.onopen = () => { clearTimeout(t); resolve(ws); };
+    ws.onerror = () => { clearTimeout(t); resolve(null); };
   });
+}
+function warmFlux(voice: string) {
+  if (voice.startsWith("flux-") && DEEPGRAM_API_KEY && !fluxWarm.has(voice)) fluxWarm.set(voice, openFlux(voice));
+}
+async function takeFlux(voice: string): Promise<WebSocket | null> {
+  const warm = fluxWarm.get(voice);
+  fluxWarm.delete(voice);
+  let ws = warm ? await warm : null;
+  if (!ws || ws.readyState !== WebSocket.OPEN) ws = await openFlux(voice);
+  warmFlux(voice); // ready for the next sentence
+  return ws;
+}
+
+/**
+ * Flux voices (flux-sienna-en, ...) stream raw PCM only over Deepgram's
+ * /v2/speak WebSocket: send the sentence, flush, and pass the audio frames on
+ * as a stream. Deepgram says "Flushed" BEFORE the last audio arrives, so on it
+ * we ask it to close and keep reading until the socket actually closes.
+ */
+async function fluxStream(text: string, voice: string): Promise<ReadableStreamDefaultReader<Uint8Array> | null> {
+  const ws = await takeFlux(voice);
+  if (!ws) return null;
+  let ctl: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(c) { ctl = c; }, cancel() { try { ws.close(); } catch { /* gone */ } } });
+  const end = () => { try { ctl.close(); } catch { /* closed */ } };
+  const timer = setTimeout(() => { end(); try { ws.close(); } catch { /* gone */ } }, 15000);
+  ws.onmessage = (e) => {
+    if (typeof e.data === "string") {
+      try { if (JSON.parse(e.data).type === "Flushed") ws.send(JSON.stringify({ type: "Close" })); } catch { /* other events */ }
+      return;
+    }
+    try { ctl.enqueue(new Uint8Array(e.data as ArrayBuffer)); } catch { /* reader gone */ }
+  };
+  ws.onerror = () => { console.error("[voice-turn] flux socket error"); clearTimeout(timer); end(); };
+  ws.onclose = () => { clearTimeout(timer); end(); };
+  ws.send(JSON.stringify({ type: "Speak", text }));
+  ws.send(JSON.stringify({ type: "Flush" }));
+  return stream.getReader();
 }
 
 /**
@@ -272,6 +297,7 @@ Deno.serve(async (req: Request) => {
   const recentTalk = messages.slice(-3).filter((m: { role?: string }) => m?.role !== "system").map((m: { content?: unknown }) => String(m?.content ?? "")).join(" ");
   const aboutTime = REMIND_TALK.test(recentTalk);
   const model = MODELS_OK.includes(String(body?.model)) ? String(body.model) : aboutTime ? REMIND_MODEL : MODEL;
+  if (pcm) warmFlux(voice); // the voice connection opens while the model thinks
   const pieces = groqStream(messages, maxTokens, ctl.signal, model);
   const firstPiece = pieces.next(); // kicks off the request
   const [{ data: { user }, error: authErr }, { data: count }] = await Promise.all([authP, countP]);
