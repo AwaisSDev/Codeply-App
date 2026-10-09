@@ -90,7 +90,7 @@ async function speak(text: string, voice: string, userId: string): Promise<{ byt
   // The budget check (database) and the speech (Deepgram) at the same time;
   // over the budget, the audio is dropped and the phone's voice says it.
   const budgetP = service.rpc("add_tts_chars", { p_user: userId, p_chars: text.length });
-  const res = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mp3`, {
+  const res = await fetch(`https://api.deepgram.com/${voice.startsWith("flux-") ? "v2" : "v1"}/speak?model=${encodeURIComponent(voice)}&encoding=mp3`, {
     method: "POST",
     headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
@@ -103,6 +103,42 @@ async function speak(text: string, voice: string, userId: string): Promise<{ byt
 }
 
 /**
+ * Flux voices (flux-sienna-en, ...) stream raw PCM only over Deepgram's
+ * /v2/speak WebSocket: send the sentence, flush, and pass the audio frames on
+ * as a stream. Deepgram says "Flushed" BEFORE the last audio arrives, so on it
+ * we ask it to close and keep reading until the socket actually closes.
+ */
+function fluxStream(text: string, voice: string): Promise<ReadableStreamDefaultReader<Uint8Array> | null> {
+  return new Promise((resolve) => {
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`wss://api.deepgram.com/v2/speak?model=${encodeURIComponent(voice)}&encoding=linear16&sample_rate=${PCM_RATE}`, ["token", DEEPGRAM_API_KEY]);
+    } catch (e) { console.error("[voice-turn] flux", e); resolve(null); return; }
+    ws.binaryType = "arraybuffer";
+    let ctl: ReadableStreamDefaultController<Uint8Array>;
+    let settled = false;
+    const stream = new ReadableStream<Uint8Array>({ start(c) { ctl = c; }, cancel() { try { ws.close(); } catch { /* gone */ } } });
+    const finish = () => { try { ctl.close(); } catch { /* closed */ } try { ws.close(); } catch { /* gone */ } };
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(null); } finish(); }, 15000);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "Speak", text }));
+      ws.send(JSON.stringify({ type: "Flush" }));
+      settled = true;
+      resolve(stream.getReader());
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data === "string") {
+        try { if (JSON.parse(e.data).type === "Flushed") ws.send(JSON.stringify({ type: "Close" })); } catch { /* other events */ }
+        return;
+      }
+      try { ctl.enqueue(new Uint8Array(e.data as ArrayBuffer)); } catch { /* reader gone */ }
+    };
+    ws.onerror = () => { console.error("[voice-turn] flux socket error"); if (!settled) { settled = true; clearTimeout(timer); resolve(null); } finish(); };
+    ws.onclose = () => { clearTimeout(timer); try { ctl.close(); } catch { /* closed */ } };
+  });
+}
+
+/**
  * A sentence as streamed raw PCM (signed 16-bit, 24 kHz mono): Deepgram sends
  * it while it is still making the rest, so the first sound is out in a few
  * hundred milliseconds instead of after the whole sentence.
@@ -110,6 +146,7 @@ async function speak(text: string, voice: string, userId: string): Promise<{ byt
 const PCM_RATE = 24000;
 async function speakStream(text: string, voice: string): Promise<ReadableStreamDefaultReader<Uint8Array> | null> {
   if (!DEEPGRAM_API_KEY) return null;
+  if (voice.startsWith("flux-")) return fluxStream(text, voice);
   const res = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=linear16&container=none&sample_rate=${PCM_RATE}`, {
     method: "POST",
     headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
@@ -185,7 +222,7 @@ Deno.serve(async (req: Request) => {
   const messages = Array.isArray(body?.messages) ? body.messages.slice(-20) : [];
   // In audio mode the last user message comes from the audio (see below).
   if (!messages.length) return json({ success: false, error: "messages[] required" }, 400);
-  const voice = /^aura-2-[a-z]+-[a-z]{2}$/.test(String(body?.voice ?? "")) ? String(body.voice) : DEFAULT_VOICE;
+  const voice = /^(aura-2|flux)-[a-z]+-[a-z]{2}$/.test(String(body?.voice ?? "")) ? String(body.voice) : DEFAULT_VOICE;
   const pcm = body?.format === "pcm";
   const maxTokens = Math.min(500, Math.max(60, Number(body?.maxTokens) || 300));
 

@@ -67,14 +67,14 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}));
     const text = String(body?.text ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
     if (!text) return json({ success: false, error: "Nothing to say." }, 400);
-    const voice = /^aura-2-[a-z]+-[a-z]{2}$/.test(String(body?.voice ?? "")) ? String(body.voice) : DEFAULT_VOICE;
+    const voice = /^(aura-2|flux)-[a-z]+-[a-z]{2}$/.test(String(body?.voice ?? "")) ? String(body.voice) : DEFAULT_VOICE;
 
     // Count the characters and ask Deepgram at the same time. The count is
     // still recorded before any audio is returned, so the cap holds; a request
     // over the cap gets its audio thrown away (a sentence's worth at most).
     const ctl = new AbortController();
     const counting = service.rpc("add_tts_chars", { p_user: userId, p_chars: text.length });
-    const speaking = fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mp3`, {
+    const speaking = fetch(`https://api.deepgram.com/${voice.startsWith("flux-") ? "v2" : "v1"}/speak?model=${encodeURIComponent(voice)}&encoding=mp3`, {
       method: "POST", signal: ctl.signal,
       headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
