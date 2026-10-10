@@ -27,7 +27,7 @@ async function withInbox(messages: Array<{ role: string; content: unknown }>, us
   const inbox = await inboxContext(userId, users.slice(-3).join("\n"), String(opts.tz ?? "UTC")).catch(() => null);
   if (!inbox) return messages;
   const out = messages.slice();
-  out.splice(out.length - 1, 0, { role: "system", content: inbox });
+  out.splice(out.length - 1, 0, { role: "system", content: inbox + "\n\nHOW TO LAY IT OUT (a phone screen): no tables. Start with a one-line summary (how many, how many need them). Then a section 'Needs you' and a section 'FYI', each a list with one email per item: **Sender** · subject in a few words · when, then on the next line what to do (or 'nothing'). Skip sections that would be empty." });
   return out;
 }
 
