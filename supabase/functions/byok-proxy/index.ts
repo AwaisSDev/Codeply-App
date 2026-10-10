@@ -14,6 +14,24 @@
 // passed through as text/event-stream instead.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
+
+/**
+ * Chat from the phone (opts.inbox): when the latest message is about email,
+ * read the user's Gmail (the link they turned on for calls) and put what was
+ * found just before that message, the same way calls do. Never fails the chat.
+ */
+async function withInbox(messages: Array<{ role: string; content: unknown }>, userId: string, opts: Record<string, unknown> | undefined) {
+  if (!opts || opts.inbox !== true) return messages;
+  const users = messages.filter((m) => m.role === "user").map((m) => String(m.content ?? ""));
+  const last = users[users.length - 1] ?? "";
+  if (!MAIL_TALK.test(last)) return messages;
+  const inbox = await inboxContext(userId, users.slice(-3).join("\n"), String(opts.tz ?? "UTC")).catch(() => null);
+  if (!inbox) return messages;
+  const out = messages.slice();
+  out.splice(out.length - 1, 0, { role: "system", content: inbox });
+  return out;
+}
 import { needsRewrap, openKey, parseKekRing, rewrapKey, scrubKey, type SealedKey } from "../_shared/model-keys.ts";
 import { checkBaseUrl, checkResolvedHost } from "../_shared/url-guard.ts";
 
@@ -81,9 +99,10 @@ Deno.serve(async (req: Request) => {
 
     const modelId = String(body.modelId || "");
     if (!/^[0-9a-f-]{36}$/i.test(modelId)) return json({ success: false, error: "Pick a synced model." }, 400);
-    const messages = cleanMessages(body.messages);
-    if (!messages) return json({ success: false, error: "messages[] required" }, 400);
+    const cleaned = cleanMessages(body.messages);
+    if (!cleaned) return json({ success: false, error: "messages[] required" }, 400);
     const opts = (body.opts || {}) as Record<string, unknown>;
+    const messages = await withInbox(cleaned, user.id, opts);
     const stream = body.stream === true;
 
     // The caller's own row (RLS), then its sealed key (service role, same user).

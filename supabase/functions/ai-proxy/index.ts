@@ -12,6 +12,24 @@
 // in lib/groq.js / lib/openrouter.js before this proxy existed.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
+
+/**
+ * Chat from the phone (opts.inbox): when the latest message is about email,
+ * read the user's Gmail (the link they turned on for calls) and put what was
+ * found just before that message, the same way calls do. Never fails the chat.
+ */
+async function withInbox(messages: Array<{ role: string; content: unknown }>, userId: string, opts: Record<string, unknown> | undefined) {
+  if (!opts || opts.inbox !== true) return messages;
+  const users = messages.filter((m) => m.role === "user").map((m) => String(m.content ?? ""));
+  const last = users[users.length - 1] ?? "";
+  if (!MAIL_TALK.test(last)) return messages;
+  const inbox = await inboxContext(userId, users.slice(-3).join("\n"), String(opts.tz ?? "UTC")).catch(() => null);
+  if (!inbox) return messages;
+  const out = messages.slice();
+  out.splice(out.length - 1, 0, { role: "system", content: inbox });
+  return out;
+}
 
 const SUPABASE_URL         = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY    = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -216,10 +234,12 @@ Deno.serve(async (req: Request) => {
       return json({ success: false, error: `Daily AI request limit reached (${DAILY_REQUEST_CAP}/day). Resets at midnight UTC.` }, 429);
     }
 
-    const { messages, opts, meta } = await req.json();
-    if (!Array.isArray(messages) || !messages.length) {
+    const parsed = await req.json();
+    const { opts, meta } = parsed;
+    if (!Array.isArray(parsed.messages) || !parsed.messages.length) {
       return json({ success: false, error: "messages[] required" }, 400);
     }
+    const messages = await withInbox(parsed.messages, user.id, opts);
 
     // Record the attempt before calling out, so a genuine attempt always
     // counts toward the cap even if the provider call itself fails midway.
