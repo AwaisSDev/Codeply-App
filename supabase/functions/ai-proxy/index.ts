@@ -13,6 +13,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
+import { describeImages } from "../_shared/vision.ts";
 
 /**
  * Chat from the phone (opts.inbox): when the latest message is about email,
@@ -239,7 +240,8 @@ Deno.serve(async (req: Request) => {
     if (!Array.isArray(parsed.messages) || !parsed.messages.length) {
       return json({ success: false, error: "messages[] required" }, 400);
     }
-    const messages = await withInbox(parsed.messages, user.id, opts);
+    // images: Gemma 4 looks and describes, then the main model answers (vision.ts)
+    const messages = await withInbox(await describeImages(parsed.messages), user.id, opts);
 
     // Record the attempt before calling out, so a genuine attempt always
     // counts toward the cap even if the provider call itself fails midway.

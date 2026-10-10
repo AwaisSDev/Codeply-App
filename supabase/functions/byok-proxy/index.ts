@@ -15,6 +15,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboxContext, MAIL_TALK } from "../_shared/gmail-lookup.ts";
+import { describeImages } from "../_shared/vision.ts";
 
 /**
  * Chat from the phone (opts.inbox): when the latest message is about email,
@@ -39,7 +40,7 @@ const SUPABASE_URL              = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY         = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const MAX_BODY = 400_000;
+const MAX_BODY = 6_000_000; // room for a few photos (they are described by vision.ts, not stored)
 const MAX_MESSAGES = 100;
 const TIMEOUT_MS = 120_000;
 
@@ -102,7 +103,8 @@ Deno.serve(async (req: Request) => {
     const cleaned = cleanMessages(body.messages);
     if (!cleaned) return json({ success: false, error: "messages[] required" }, 400);
     const opts = (body.opts || {}) as Record<string, unknown>;
-    const messages = await withInbox(cleaned, user.id, opts);
+    // images: described by Gemma 4 first (vision.ts), so any model can answer about them
+    const messages = await withInbox(await describeImages(cleaned), user.id, opts);
     const stream = body.stream === true;
 
     // The caller's own row (RLS), then its sealed key (service role, same user).
